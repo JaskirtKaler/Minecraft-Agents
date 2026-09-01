@@ -1,0 +1,17 @@
+{
+  "name": "minecraft-agent-bot",
+  "version": "1.0.0",
+  "description": "Mineflayer Bot Framework & Execution Sandbox for LLM Agent",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js"
+  },
+  "dependencies": {
+    "mineflayer": "^4.20.1",
+    "mineflayer-pathfinder": "^2.4.5",
+    "minecraft-data": "^3.72.0",
+    "prismarine-viewer": "^1.30.0",
+    "vec3": "^0.1.8",
+    "ws": "^8.18.0"
+  }
+}

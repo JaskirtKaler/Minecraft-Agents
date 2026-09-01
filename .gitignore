@@ -1,0 +1,21 @@
+# Environment variables
+.env
+
+# Node.js dependencies
+node_modules/
+bot/node_modules/
+
+# Python cache & artifacts
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache/
+
+# IDE & OS files
+.DS_Store
+.vscode/
+.idea/
+
+# Local scratch directory
+scratch/
