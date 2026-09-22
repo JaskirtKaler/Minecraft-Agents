@@ -8,12 +8,46 @@ const pathfinder = require('mineflayer-pathfinder');
 const minecraftData = require('minecraft-data');
 
 /**
+ * Extracts pure JavaScript code from LLM responses (stripping markdown & reasoning).
+ */
+function extractExecutableCode(rawText) {
+    if (!rawText) return '';
+    let text = rawText.replace(/<think>[\s\S]*?<\/think>/gi, '').trim();
+
+    // 1. Match code inside ```javascript ... ``` or ```js ... ``` or ``` ... ```
+    const match = text.match(/```(?:javascript|js)?\s*([\s\S]*?)```/i);
+    let code = match ? match[1].trim() : text;
+
+    // 2. If no closing backticks but starts with backtick block
+    if (code.startsWith('```javascript')) code = code.substring(13);
+    else if (code.startsWith('```js')) code = code.substring(5);
+    else if (code.startsWith('```')) code = code.substring(3);
+    if (code.endsWith('```')) code = code.substring(0, code.length - 3);
+
+    // 3. Prevent bot recreation or quit
+    code = code.replace(/const\s+mineflayer\s*=\s*require\s*\(\s*['"]mineflayer['"]\s*\);?/g, '// mineflayer injected');
+    code = code.replace(/(?:const|let|var)\s+bot\s*=\s*mineflayer\.createBot\s*\([\s\S]*?\);?/g, '// bot injected');
+    code = code.replace(/bot\.quit\s*\(\s*\);?/g, '// bot.quit prevented');
+
+    // 4. If bot.once('spawn', fn) is used, run it immediately because the bot is already in world!
+    code = code.replace(/bot\.(?:once|on)\s*\(\s*['"]spawn['"]\s*,\s*([a-zA-Z0-9_]+)\s*\);?/g, 'await $1();');
+
+    // 5. If code defines a function like async function mine() but doesn't call it, auto-invoke
+    const funcMatch = code.match(/async\s+function\s+([a-zA-Z0-9_]+)\s*\(/);
+    if (funcMatch) {
+        const funcName = funcMatch[1];
+        // Check if function is called anywhere below its definition
+        const restOfCode = code.substring(code.indexOf(funcMatch[0]) + funcMatch[0].length);
+        if (!restOfCode.includes(`${funcName}(`)) {
+            code += `\nawait ${funcName}();`;
+        }
+    }
+
+    return code.trim();
+}
+
+/**
  * Executes a JS code string within the bot context.
- * 
- * @param {string} code - Mineflayer JavaScript snippet to execute
- * @param {object} bot - Active Mineflayer bot instance
- * @param {number} timeoutMs - Max execution time in ms (default 30s)
- * @returns {Promise<{success: boolean, stdout: string, stderr: string, errorStack: string, durationMs: number}>}
  */
 async function executeCodeSnippet(code, bot, timeoutMs = 30000) {
     const startTime = Date.now();
@@ -30,22 +64,8 @@ async function executeCodeSnippet(code, bot, timeoutMs = 30000) {
 
     const mcData = minecraftData(bot.version);
     const goals = pathfinder.goals;
+    const cleanCode = extractExecutableCode(code);
 
-    // Clean up code snippet markdown and reasoning tags (<think>...</think>) if present
-    let cleanCode = code.trim();
-    cleanCode = cleanCode.replace(/<think>[\s\S]*?<\/think>/gi, '').trim();
-
-    if (cleanCode.startsWith('```javascript')) {
-        cleanCode = cleanCode.substring(13);
-    } else if (cleanCode.startsWith('```js')) {
-        cleanCode = cleanCode.substring(5);
-    }
-    if (cleanCode.endsWith('```')) {
-        cleanCode = cleanCode.substring(0, cleanCode.length - 3);
-    }
-    cleanCode = cleanCode.trim();
-
-    // Create execution context
     let timeoutId;
     const timeoutPromise = new Promise((_, reject) => {
         timeoutId = setTimeout(() => {
@@ -54,7 +74,6 @@ async function executeCodeSnippet(code, bot, timeoutMs = 30000) {
     });
 
     const executionPromise = (async () => {
-        // Construct function with injected parameters
         const AsyncFunction = Object.getPrototypeOf(async function () { }).constructor;
         const runner = new AsyncFunction(
             'bot',
@@ -85,7 +104,7 @@ async function executeCodeSnippet(code, bot, timeoutMs = 30000) {
         
         // Stop any pathfinder movement if error occurred
         if (bot.pathfinder) {
-            bot.pathfinder.setGoal(null);
+            try { bot.pathfinder.setGoal(null); } catch (e) {}
         }
 
         const stackTrace = err.stack || err.toString();
@@ -101,4 +120,4 @@ async function executeCodeSnippet(code, bot, timeoutMs = 30000) {
     }
 }
 
-module.exports = { executeCodeSnippet };
+module.exports = { executeCodeSnippet, extractExecutableCode };

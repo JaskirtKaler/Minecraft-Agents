@@ -19,13 +19,10 @@ class TavilySearchClient:
             logger.warning("TAVILY_API_KEY is not set. Web RAG searches will be disabled until set in .env.")
 
     async def search_minecraft_wiki(self, query: str, max_results: int = 3) -> str:
-        """
-        Searches the web / Minecraft Wiki for recipes, block mechanics, or crafting instructions.
-        
-        :param query: Natural language query (e.g. "how to craft wooden pickaxe in minecraft")
-        :param max_results: Number of search results to retrieve
-        :return: Formatted text summary of search results
-        """
+        if not config.enable_tavily:
+            logger.info("Tavily RAG is currently disabled (ENABLE_TAVILY=false). Skipping search.")
+            return ""
+
         if not self.api_key:
             return "[Tavily Search Disabled] TAVILY_API_KEY is not configured in .env."
 

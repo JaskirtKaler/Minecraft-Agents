@@ -17,6 +17,7 @@ class Config(BaseModel):
 
     # Tavily Web Search API Settings
     tavily_api_key: str = Field(default_factory=lambda: os.getenv("TAVILY_API_KEY", ""))
+    enable_tavily: bool = Field(default_factory=lambda: os.getenv("ENABLE_TAVILY", "false").lower() == "true")
 
     # WebSocket Bridge Server Settings
     ws_host: str = Field(default_factory=lambda: os.getenv("WS_HOST", "0.0.0.0"))

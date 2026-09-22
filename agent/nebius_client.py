@@ -28,7 +28,7 @@ class NebiusLLMClient:
         self,
         messages: List[Dict[str, str]],
         temperature: float = 0.2,
-        max_tokens: int = 1500
+        max_tokens: int = 2500
     ) -> str:
         """Generates a text completion or code snippet from Nebius Token Factory."""
         if not self.api_key:

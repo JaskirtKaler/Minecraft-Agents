@@ -1,0 +1,3 @@
+This is where the minecrafter servier connection will happen. Need a sever with the online-mode=false 
+as the agent will be joining in offline mode else the minecraft agent will require a mojang account. 
+Need to make the server modded with a plugin that allows for python scripts to be run on the server.

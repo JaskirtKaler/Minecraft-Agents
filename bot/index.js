@@ -2,11 +2,18 @@
  * Main Mineflayer Bot Entry Point & Bridge Interface
  */
 
+const path = require('path');
+require('dotenv').config({ path: path.resolve(__dirname, '../.env') });
 const mineflayer = require('mineflayer');
 const { pathfinder, Movements } = require('mineflayer-pathfinder');
 const minecraftData = require('minecraft-data');
 const WebSocket = require('ws');
-const { mineflayer: mineflayerViewer } = require('prismarine-viewer');
+let mineflayerViewer = null;
+try {
+    mineflayerViewer = require('prismarine-viewer').mineflayer;
+} catch (e) {
+    console.warn('[Prismarine Viewer] Optional viewer module unavailable:', e.message);
+}
 const { getBotState } = require('./state');
 const { executeCodeSnippet } = require('./sandbox');
 
@@ -96,12 +103,19 @@ bot.on('error', (err) => {
 });
 
 bot.on('death', () => {
-    console.warn(`[Mineflayer] Bot died in game.`);
+    console.warn(`[Mineflayer] Bot died in game. Automatically respawning...`);
     sendToOrchestrator({
         type: 'event',
         event: 'death',
         data: { position: bot.entity ? bot.entity.position : null }
     });
+    setTimeout(() => {
+        try {
+            bot.respawn();
+        } catch (e) {
+            console.error('[Respawn Error]', e.message);
+        }
+    }, 1000);
 });
 
 /**

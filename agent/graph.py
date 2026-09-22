@@ -11,6 +11,7 @@ from langgraph.graph import StateGraph, END
 from agent.bridge import MineflayerBridge
 from agent.nebius_client import NebiusLLMClient
 from agent.tavily_client import TavilySearchClient
+from agent.jarvis_client import JarvisClient
 from agent.prompts import SYSTEM_PROMPT, REWRITE_PROMPT_TEMPLATE
 from agent.config import config
 
@@ -31,6 +32,7 @@ class MinecraftAgentGraph:
         self.bridge = bridge
         self.nebius = NebiusLLMClient()
         self.tavily = TavilySearchClient()
+        self.jarvis = JarvisClient()
         self.graph = self._build_graph()
 
     def _build_graph(self):
@@ -86,13 +88,17 @@ class MinecraftAgentGraph:
         needs_search = any(kw in objective.lower() for kw in ["craft", "make", "build", "recipe", "smelt"]) or bool(error_trace)
         
         if needs_search and not state.get("rag_info"):
-            query = f"Minecraft recipe or mechanics for: {objective}"
-            if error_trace:
-                query += f" (fixing error: {error_trace[:100]})"
+            query = f"Minecraft instructions or recipe for objective: {objective}"
+            # Ask Jarvis locally (zero external API cost)
+            jarvis_advice = await self.jarvis.query_knowledge(query, context=error_trace)
             
-            rag_res = await self.tavily.search_minecraft_wiki(query)
-            state["rag_info"] = rag_res
-            logger.info("Retrieved RAG background info from Tavily.")
+            # Optional Tavily fallback if enabled
+            if config.enable_tavily:
+                tavily_res = await self.tavily.search_minecraft_wiki(query)
+                jarvis_advice += f"\n{tavily_res}"
+
+            state["rag_info"] = jarvis_advice.strip()
+            logger.info("Retrieved strategy & recipe guidance from Jarvis.")
         else:
             if "rag_info" not in state:
                 state["rag_info"] = ""
