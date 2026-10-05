@@ -16,6 +16,7 @@ try {
 }
 const { getBotState } = require('./state');
 const { executeCodeSnippet } = require('./sandbox');
+const { executeTask } = require('./skills');
 
 // Configuration from environment or defaults
 const HOST = process.env.MC_HOST || 'localhost';
@@ -180,7 +181,7 @@ function sendToOrchestrator(payload) {
  * Handle incoming commands from Python Orchestrator
  */
 async function handleOrchestratorMessage(message) {
-    const { type, id, code, text } = message;
+    const { type, id, code, text, task, timeoutMs } = message;
 
     switch (type) {
         case 'get_state':
@@ -195,7 +196,10 @@ async function handleOrchestratorMessage(message) {
             console.log(`[Execution Sandbox] Executing request ID: ${id || 'unnamed'}`);
             console.log(`--- CODE --- \n${code}\n------------`);
             
-            const result = await executeCodeSnippet(code, bot);
+            const sandboxTimeoutMs = Number.isInteger(timeoutMs)
+                ? Math.min(Math.max(timeoutMs, 1000), 120000)
+                : 30000;
+            const result = await executeCodeSnippet(code, bot, sandboxTimeoutMs);
             
             console.log(`[Execution Result] Success: ${result.success} | Duration: ${result.durationMs}ms`);
             if (!result.success) {
@@ -209,6 +213,22 @@ async function handleOrchestratorMessage(message) {
                 currentState: getBotState(bot)
             });
             break;
+
+        case 'execute_task': {
+            console.log(`[Verified Task] Executing request ID: ${id || 'unnamed'} (${task?.name || 'unknown'})`);
+            const startedAt = Date.now();
+            const taskResult = await executeTask(bot, task);
+            const result = { ...taskResult, durationMs: Date.now() - startedAt };
+
+            console.log(`[Verified Task] Success: ${result.success} | Verified: ${result.verified} | Duration: ${result.durationMs}ms`);
+            sendToOrchestrator({
+                type: 'execution_result',
+                id,
+                result,
+                currentState: getBotState(bot)
+            });
+            break;
+        }
 
         case 'chat':
             if (text) {

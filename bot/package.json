@@ -4,7 +4,8 @@
   "description": "Mineflayer Bot Framework & Execution Sandbox for LLM Agent",
   "main": "index.js",
   "scripts": {
-    "start": "node index.js"
+    "start": "node index.js",
+    "test": "node ../tests/test_skills.js"
   },
   "dependencies": {
     "canvas": "^3.2.3",

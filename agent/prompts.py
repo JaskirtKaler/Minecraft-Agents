@@ -11,7 +11,7 @@ The following globals are ALREADY defined and injected into your execution scope
 - `bot`: The active Mineflayer bot instance (DO NOT call require('mineflayer') or createBot!).
 - `Vec3`: Vector3 math class for 3D coordinates.
 - `pathfinder`: Mineflayer pathfinder plugin object.
-- `goals`: Pathfinding goal classes (`goals.GoalBlock(x,y,z)`, `goals.GoalNear(x,y,z,range)`, `goals.GoalXZ(x,z)`).
+- `goals`: Pathfinding goal classes (`goals.GoalNear(x,y,z,range)`, `goals.GoalGetToBlock(x,y,z)`, `goals.GoalXZ(x,z)`).
 - `mcData`: Minecraft data instance for the current version (`minecraft-data(bot.version)`).
 - `console`: Standard console logging (`console.log('message')`).
 
@@ -26,7 +26,9 @@ The following globals are ALREADY defined and injected into your execution scope
    ```javascript
    const block = bot.findBlock({ matching: b => b.name === 'oak_log', maxDistance: 32 });
    if (!block) throw new Error('Could not find oak_log nearby.');
-   await bot.pathfinder.goto(new goals.GoalBlock(block.position.x, block.position.y, block.position.z));
+   if (!bot.canDigBlock(block)) throw new Error(`Cannot safely dig ${block.name}.`);
+   // GoalBlock targets the solid block itself. Use a reachable interaction goal.
+   await bot.pathfinder.goto(new goals.GoalGetToBlock(block.position.x, block.position.y, block.position.z));
    await bot.dig(block);
    ```
 4. **Multiple Items**: Use loops to collect multiple items:
@@ -34,17 +36,21 @@ The following globals are ALREADY defined and injected into your execution scope
    for (let i = 0; i < 5; i++) {
        const block = bot.findBlock({ matching: b => b.name === 'oak_log', maxDistance: 32 });
        if (!block) break;
-       await bot.pathfinder.goto(new goals.GoalBlock(block.position.x, block.position.y, block.position.z));
+       if (!bot.canDigBlock(block)) continue;
+       await bot.pathfinder.goto(new goals.GoalGetToBlock(block.position.x, block.position.y, block.position.z));
        await bot.dig(block);
    }
    ```
-5. **Chat Status**: Use `bot.chat('Mining oak logs now...')` to report progress to players in game.
-6. **Error Handling**: If a required item, block, or path is missing, throw a clear `Error('descriptive error message')`.
+5. **Handing over items**: Mineflayer has `bot.toss(itemType, metadata, count)` and `bot.tossStack(item)`.
+   There is NO `bot.dropItem()` method. Navigate near the named player first, then await `bot.toss(...)`.
+6. **Chat Status**: Use `bot.chat('Mining oak logs now...')` to report progress to players in game.
+7. **Error Handling**: If a required item, block, or path is missing, throw a clear `Error('descriptive error message')`. Never catch an error merely to chat it; rethrow it so the controller can recover.
 
 ### CRITICAL RULES:
 - Output MUST start with ```javascript and end with ```.
 - Write top-level async statement body directly.
 - NEVER call `bot.quit()` or `require('mineflayer')`.
+- Await all work before the snippet ends; do not start a background async function and return early.
 """
 
 REWRITE_PROMPT_TEMPLATE = """The previous code snippet failed to execute in the Mineflayer Sandbox.

@@ -59,6 +59,7 @@ class MinecraftAgentGraph:
             {
                 "retry": "rag_search",
                 "success": END,
+                "unverified": END,
                 "max_retries_reached": END
             }
         )
@@ -165,13 +166,21 @@ Write executable Mineflayer JavaScript code snippet to accomplish the objective.
             return state
 
         try:
-            res = await self.bridge.execute_code(code)
+            execution_timeout_seconds = (config.code_timeout_ms / 1000) + 5
+            res = await self.bridge.execute_code(
+                code,
+                timeout=execution_timeout_seconds,
+                execution_timeout_ms=config.code_timeout_ms,
+            )
             state["execution_result"] = res
             
             if res.get("success"):
-                logger.info("Code executed successfully in Mineflayer sandbox!")
+                logger.info("Code executed in Mineflayer sandbox; objective is not yet verified.")
                 state["error_trace"] = ""
-                state["status"] = "success"
+                # Running generated code is not evidence that the requested world
+                # state exists. Typed skills set `success` only after a concrete
+                # postcondition check; raw code remains explicitly unverified.
+                state["status"] = "unverified"
             else:
                 error_stack = res.get("errorStack") or res.get("stderr") or "Unknown execution error"
                 logger.warning(f"Sandbox execution failed: {error_stack}")
@@ -191,6 +200,10 @@ Write executable Mineflayer JavaScript code snippet to accomplish the objective.
         if state.get("status") == "success":
             logger.info("Objective completed successfully! Ending loop.")
             return "success"
+
+        if state.get("status") == "unverified":
+            logger.warning("Generated code finished, but no task-specific postcondition was checked.")
+            return "unverified"
         
         if state.get("retry_count", 0) < config.max_retries:
             logger.info(f"Execution failed. Triggering Self-Correction (Attempt {state['retry_count'] + 1}/{config.max_retries})...")
