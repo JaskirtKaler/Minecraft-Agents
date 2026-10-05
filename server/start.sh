@@ -2,8 +2,8 @@
 cd "$(dirname "$0")"
 
 # Locate Java
-JAVA_CMD="java"
-if ! command -v java &> /dev/null; then
+JAVA_CMD="${MINECRAFT_JAVA:-java}"
+if ! command -v "$JAVA_CMD" &> /dev/null; then
     if [ -x "/Library/Java/JavaVirtualMachines/jdk-21.jdk/Contents/Home/bin/java" ]; then
         JAVA_CMD="/Library/Java/JavaVirtualMachines/jdk-21.jdk/Contents/Home/bin/java"
     elif [ -x "$JAVA_HOME/bin/java" ]; then
@@ -45,4 +45,4 @@ fi
 echo "eula=true" > eula.txt
 
 echo "🚀 Starting Minecraft Server with ViaVersion (online-mode=false)..."
-"$JAVA_CMD" -Xms2G -Xmx2G -jar "$JAR_NAME" nogui
+exec "$JAVA_CMD" -Xms2G -Xmx2G -jar "$JAR_NAME" nogui "$@"

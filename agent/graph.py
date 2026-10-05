@@ -25,11 +25,13 @@ class AgentState(TypedDict):
     error_trace: str
     retry_count: int
     rag_info: str
+    memory_context: str
     status: str
 
 class MinecraftAgentGraph:
-    def __init__(self, bridge: MineflayerBridge):
+    def __init__(self, bridge: MineflayerBridge, memory=None):
         self.bridge = bridge
+        self.memory = memory
         self.nebius = NebiusLLMClient()
         self.tavily = TavilySearchClient()
         self.jarvis = JarvisClient()
@@ -57,7 +59,7 @@ class MinecraftAgentGraph:
             "execute_code",
             self.should_retry_or_end,
             {
-                "retry": "rag_search",
+                "retry": "observe",
                 "success": END,
                 "unverified": END,
                 "max_retries_reached": END
@@ -76,6 +78,12 @@ class MinecraftAgentGraph:
         except Exception as e:
             logger.error(f"Failed to fetch bot state: {e}")
             state["bot_state"] = {"ready": False, "error": str(e)}
+        state["memory_context"] = ""
+        if self.memory and state.get("bot_state", {}).get("ready"):
+            try:
+                state["memory_context"] = await self.memory.context(state["bot_state"], state["objective"])
+            except Exception:
+                logger.exception("Memory lookup unavailable; retaining the fresh live observation")
         return state
 
     async def rag_search_node(self, state: AgentState) -> AgentState:
@@ -122,7 +130,9 @@ class MinecraftAgentGraph:
                 objective=objective,
                 previous_code=previous_code,
                 error_trace=error_trace,
-                rag_info=rag_info
+                rag_info=rag_info,
+                bot_state=bot_state_json,
+                memory_context=state.get("memory_context", ""),
             )
         else:
             # Initial generation prompt
@@ -131,6 +141,9 @@ OBJECTIVE: {objective}
 
 CURRENT GAME STATE:
 {bot_state_json}
+
+HISTORICAL WORLD MEMORY (not current truth; verify before acting):
+{state.get("memory_context") or "None"}
 
 RELEVANT WIKI / RAG KNOWLEDGE:
 {rag_info if rag_info else "None"}
@@ -163,6 +176,8 @@ Write executable Mineflayer JavaScript code snippet to accomplish the objective.
         if not code:
             state["execution_result"] = {"success": False, "errorStack": "No code was generated."}
             state["error_trace"] = "No code was generated."
+            state["status"] = "failed"
+            state["retry_count"] += 1
             return state
 
         try:

@@ -3,13 +3,17 @@ Main Entry Point for Autonomous LLM Minecraft Agent
 Launches the WebSocket Bridge and manages interactive terminal & in-game chat objectives.
 """
 
+import argparse
 import asyncio
+import json
 import logging
+import signal
 import sys
 from agent.config import config
 from agent.bridge import MineflayerBridge
 from agent.graph import MinecraftAgentGraph
 from agent.intents import is_explicit_task_request, parse_resource_task
+from agent.world_memory import WorldMemory
 
 logging.basicConfig(
     level=logging.INFO,
@@ -17,16 +21,17 @@ logging.basicConfig(
 )
 logger = logging.getLogger("MainController")
 
-async def run_agent_loop(bridge: MineflayerBridge):
+async def run_agent_loop(bridge: MineflayerBridge, memory=None, chat_only=False):
     """Interactive loop for CLI objectives and automated in-game Minecraft chat trigger."""
-    agent_graph = MinecraftAgentGraph(bridge)
+    agent_graph = MinecraftAgentGraph(bridge, memory=memory)
     objective_lock = asyncio.Lock()
 
     print("\n" + "="*60)
     print(" 🎮 MINECRAFT LLM AGENT (Mineflayer + Nebius Token Factory) 🎮 ")
     print("="*60)
-    print(f"• Nebius Model     : {config.nebius_model}")
-    print(f"• Nebius Base      : {config.nebius_base_url}")
+    print(f"• Planner Model    : {config.nebius_model}")
+    print(f"• Planner Base     : {config.nebius_base_url}")
+    print(f"• World Memory     : {memory.directory if memory else 'disabled'}")
     print(f"• WebSocket Server : {config.ws_host}:{config.ws_port}")
     print("="*60)
     print("\nWaiting for Node.js Mineflayer Bot to connect via WebSocket...")
@@ -37,7 +42,9 @@ async def run_agent_loop(bridge: MineflayerBridge):
 
     print("\n✅ Mineflayer Bot connected successfully! Agent is ready for objectives.")
     print("💡 YOU CAN NOW TALK TO THE AGENT DIRECTLY IN MINECRAFT GAME CHAT!")
-    print("   Or type objectives below in this terminal (e.g. 'mine 3 oak logs', 'craft wooden planks').\n")
+    if not chat_only:
+        print("   Or type objectives below in this terminal (e.g. 'mine 3 oak logs', 'craft wooden planks').\n")
+        print("   Type 'memory' for saved progress or 'memory status' for graph health.\n")
 
     # In-Game Chat Listener Callback
     def handle_bot_event(event_payload):
@@ -57,6 +64,13 @@ async def run_agent_loop(bridge: MineflayerBridge):
             )
 
     bridge.event_callbacks.append(handle_bot_event)
+
+    if chat_only:
+        print("Chat-only mode: send objectives in Minecraft. Stop the launcher with Ctrl+C.")
+        # Background launchers have no interactive stdin. Keep the bridge alive
+        # without an input() worker that could hang shutdown or exit on EOF.
+        await asyncio.Event().wait()
+        return
 
     while True:
         try:
@@ -86,10 +100,19 @@ async def execute_cli_objective(
 ):
     """Executes objective from terminal input."""
     async with objective_lock:
+        if objective.lower() in {"memory", "memory status"}:
+            if not agent_graph.memory:
+                print("World memory is disabled.")
+            elif objective.lower() == "memory status":
+                print(json.dumps(agent_graph.memory.status(), indent=2))
+            else:
+                state = await bridge.get_state()
+                print(await agent_graph.memory.context(state, "world progress locations tasks"))
+            return
         task = parse_resource_task(objective)
         if task:
             print(f"\n🔧 Running verified task: {task['name']}...")
-            result = await bridge.execute_task(task)
+            result = await execute_recorded_task(agent_graph, bridge, objective, task)
             if result.get("success") and result.get("verified"):
                 print(f"\n✨ OBJECTIVE VERIFIED SUCCESSFULLY: {result.get('message', objective)} ✨\n")
             else:
@@ -113,10 +136,20 @@ async def execute_chat_objective(
         # Physical tasks are serialized because Mineflayer pathfinder only has one
         # active goal at a time.
         async with objective_lock:
+            if message.lower() in {"memory", "what do you remember?", "what do you remember"}:
+                if not agent_graph.memory:
+                    await bridge.send_chat("World memory is disabled.")
+                else:
+                    state = await bridge.get_state()
+                    recalled = await agent_graph.memory.context(state, "world progress tasks locations")
+                    # Exact checkpoint summaries first; keep chat bounded.
+                    for line in recalled.splitlines()[:5]:
+                        await bridge.send_chat(line[:220])
+                return
             task = parse_resource_task(message, requester=username)
             if task:
                 await bridge.send_chat(f"Starting verified task: {task['name']}.")
-                result = await bridge.execute_task(task)
+                result = await execute_recorded_task(agent_graph, bridge, message, task, username)
                 if result.get("success") and result.get("verified"):
                     await bridge.send_chat(f"✅ {result.get('message', 'Task verified.')}")
                 else:
@@ -127,7 +160,7 @@ async def execute_chat_objective(
                 return
 
             await bridge.send_chat(f"Planning objective: '{message}'...")
-            final_state = await run_planner_objective(agent_graph, message)
+            final_state = await run_planner_objective(agent_graph, message, username)
             status = final_state.get("status")
 
             if status == "success":
@@ -141,7 +174,30 @@ async def execute_chat_objective(
         logger.error(f"Error processing in-game chat command: {e}")
 
 
-async def run_planner_objective(agent_graph: MinecraftAgentGraph, objective: str):
+async def execute_recorded_task(agent_graph, bridge, objective, task, requester=None):
+    """Persist outcome semantics; raw execution must never become verified memory."""
+    state = await bridge.get_state()
+    try:
+        result = await bridge.execute_task(task)
+    except Exception as exc:
+        result = {"success": False, "verified": False, "status": "unknown",
+                  "message": f"Interrupted/unknown outcome: {exc}"}
+        save_task_outcome(agent_graph, objective, task, result, state, requester)
+        raise
+    save_task_outcome(agent_graph, objective, task, result, bridge.latest_state or state, requester)
+    return result
+
+
+def save_task_outcome(agent_graph, objective, task, result, state, requester=None):
+    """A disk/memory fault must not change the task's actual execution result."""
+    if agent_graph.memory:
+        try:
+            agent_graph.memory.record_task(objective, task, result, state, requester)
+        except Exception:
+            logger.exception("Task outcome could not be saved to memory; game result is unchanged")
+
+
+async def run_planner_objective(agent_graph: MinecraftAgentGraph, objective: str, requester=None):
     """Run the legacy free-form planner with explicit unverified-result semantics."""
     initial_state = {
         "objective": objective,
@@ -151,10 +207,23 @@ async def run_planner_objective(agent_graph: MinecraftAgentGraph, objective: str
         "error_trace": "",
         "retry_count": 0,
         "rag_info": "",
+        "memory_context": "",
         "status": "started"
     }
     print(f"\n🧭 Running planner for objective: '{objective}'...")
-    return await agent_graph.graph.ainvoke(initial_state)
+    try:
+        final = await agent_graph.graph.ainvoke(initial_state)
+    except Exception as exc:
+        save_task_outcome(agent_graph, objective, None, {
+            "success": False, "verified": False, "status": "unknown", "message": f"Planner interrupted: {exc}",
+        }, agent_graph.bridge.latest_state, requester)
+        raise
+    save_task_outcome(agent_graph, objective, None, {
+        "success": final.get("status") in {"success", "unverified"},
+        "verified": False, "status": final.get("status"),
+        "message": final.get("error_trace") or "Generated-code attempt finished; objective not verified.",
+    }, agent_graph.bridge.latest_state or final.get("bot_state", {}), requester)
+    return final
 
 
 def report_cli_planner_outcome(objective: str, final_state: dict):
@@ -167,18 +236,36 @@ def report_cli_planner_outcome(objective: str, final_state: dict):
     else:
         print(f"\n❌ OBJECTIVE FAILED: '{objective}' (Reason: {final_state.get('error_trace', 'Unknown')})\n")
 
-async def main():
-    bridge = MineflayerBridge(host=config.ws_host, port=config.ws_port)
-    server = await bridge.start()
-    
+async def main(chat_only=False):
+    loop = asyncio.get_running_loop()
+    if chat_only:
+        controller_task = asyncio.current_task()
+        loop.add_signal_handler(signal.SIGTERM, controller_task.cancel)
+    memory = None
+    server = None
     try:
-        await run_agent_loop(bridge)
+        bridge = MineflayerBridge(host=config.ws_host, port=config.ws_port)
+        memory = WorldMemory(config) if config.memory_enabled else None
+        if memory:
+            bridge.state_callbacks.append(memory.observe)
+            bridge.event_callbacks.append(memory.record_event)
+            memory.start()
+        server = await bridge.start()
+        await run_agent_loop(bridge, memory, chat_only=chat_only)
     finally:
-        server.close()
-        await server.wait_closed()
+        if server:
+            server.close()
+            await server.wait_closed()
+        if memory:
+            await memory.close()
+        if chat_only:
+            loop.remove_signal_handler(signal.SIGTERM)
 
 if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description="Minecraft agent controller")
+    parser.add_argument("--chat-only", action="store_true", help="Accept game-chat objectives without terminal input")
+    args = parser.parse_args()
     try:
-        asyncio.run(main())
-    except KeyboardInterrupt:
+        asyncio.run(main(chat_only=args.chat_only))
+    except (KeyboardInterrupt, asyncio.CancelledError):
         sys.exit(0)

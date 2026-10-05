@@ -22,6 +22,15 @@ class MineflayerBridge:
         self.pending_requests: Dict[str, asyncio.Future] = {}
         self.latest_state: Dict[str, Any] = {}
         self.event_callbacks: list[Callable[[Dict[str, Any]], None]] = []
+        self.state_callbacks: list[Callable[[Dict[str, Any]], None]] = []
+
+    def _update_state(self, state: Dict[str, Any]):
+        self.latest_state = state
+        for callback in self.state_callbacks:
+            try:
+                callback(state)
+            except Exception:
+                logger.exception("Error saving bot state")
 
     async def start(self):
         """Starts the WebSocket server."""
@@ -58,18 +67,22 @@ class MineflayerBridge:
         msg_id = message.get("id")
 
         if msg_type == "state_update":
-            self.latest_state = message.get("data", {})
+            self._update_state(message.get("data", {}))
             logger.debug("Received background state update from bot.")
 
-        elif msg_type == "state_response" and msg_id in self.pending_requests:
-            future = self.pending_requests.pop(msg_id)
-            if not future.done():
+        elif msg_type == "state_response":
+            self._update_state(message.get("data", {}))
+            future = self.pending_requests.pop(msg_id, None)
+            if future and not future.done():
                 future.set_result(message.get("data", {}))
 
-        elif msg_type == "execution_result" and msg_id in self.pending_requests:
-            future = self.pending_requests.pop(msg_id)
-            if not future.done():
-                self.latest_state = message.get("currentState", self.latest_state)
+        elif msg_type == "execution_result":
+            # A late result can still contain an important world checkpoint,
+            # even if the requesting command already timed out.
+            if message.get("currentState"):
+                self._update_state(message.get("currentState", self.latest_state))
+            future = self.pending_requests.pop(msg_id, None)
+            if future and not future.done():
                 future.set_result(message.get("result", {}))
 
         elif msg_type == "event":

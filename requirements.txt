@@ -1,9 +1,15 @@
 # Python 3.12 runtime dependencies for the controller.
 # These pins match the project's `minecraft-agent` Conda environment as verified
-# on 2026-10-04. Keep them together with the Node package-lock.json.
+# on 2026-10-04; Graphiti dependencies added/checked 2026-10-05.
+# Keep them together with the Node package-lock.json.
 httpx==0.28.1
 langgraph==1.2.11
 openai==3.6.0
 pydantic==2.13.5
 python-dotenv==1.2.3
 websockets==16.1.1
+# Embedded graph storage: Python 3.12+, macOS/Linux. Never needs a cloud DB.
+graphiti-core[falkordb,falkordblite]==0.30.2
+falkordblite==0.10.0
+falkordb==1.7.0
+redis==7.4.1

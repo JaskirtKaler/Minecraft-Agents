@@ -20,3 +20,6 @@ __pycache__/
 
 # Local scratch directory
 scratch/
+
+# Private per-world checkpoints, task history, graph and local locks
+data/

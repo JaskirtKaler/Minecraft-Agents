@@ -1,5 +1,6 @@
 const assert = require('assert/strict');
 const { executeTask } = require('../bot/skills');
+const { runStateTests } = require('./test_state');
 
 function position (x, y, z) {
   return { x, y, z };
@@ -193,6 +194,7 @@ async function run () {
   await testSafeTossStackFallback();
   await testMineAndGive();
   await testActionableNoLogsError();
+  await runStateTests();
   console.log('✓ deterministic skills tests passed');
 }
 

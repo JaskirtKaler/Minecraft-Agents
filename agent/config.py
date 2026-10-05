@@ -29,6 +29,17 @@ class Config(BaseModel):
     mc_username: str = Field(default_factory=lambda: os.getenv("MC_USERNAME", "AI_Agent"))
     mc_version: str = Field(default_factory=lambda: os.getenv("MC_VERSION", "1.20.1"))
 
+    # World memory remains local even when the action planner uses Nebius.
+    memory_enabled: bool = Field(default_factory=lambda: os.getenv("MEMORY_ENABLED", "true").lower() == "true")
+    memory_dir: str = Field(default_factory=lambda: os.getenv("MEMORY_DIR", "data/memory"))
+    graphiti_enabled: bool = Field(default_factory=lambda: os.getenv("GRAPHITI_ENABLED", "true").lower() == "true")
+    memory_base_url: str = Field(default_factory=lambda: os.getenv("MEMORY_BASE_URL", "http://localhost:11434/v1"))
+    memory_api_key: str = Field(default_factory=lambda: os.getenv("MEMORY_API_KEY", "local-ollama"))
+    memory_model: str = Field(default_factory=lambda: os.getenv("MEMORY_MODEL", os.getenv("JARVIS_MODEL", "gemma4:26b")))
+    memory_embedding_model: str = Field(default_factory=lambda: os.getenv("MEMORY_EMBEDDING_MODEL", "nomic-embed-text"))
+    memory_embedding_dim: int = Field(default_factory=lambda: int(os.getenv("MEMORY_EMBEDDING_DIM", "768")))
+    memory_ingest_timeout: float = Field(default_factory=lambda: float(os.getenv("MEMORY_INGEST_TIMEOUT", "180")))
+
     # Execution Loop Settings
     max_retries: int = Field(default_factory=lambda: int(os.getenv("MAX_RETRIES", "3")))
     code_timeout_ms: int = Field(default_factory=lambda: int(os.getenv("CODE_TIMEOUT_MS", "30000")))

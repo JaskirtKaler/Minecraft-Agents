@@ -3,9 +3,112 @@
  * Converts raw bot state into structured JSON for LLM Prompt Context.
  */
 
+const { randomUUID } = require('crypto');
+
+const KEY_BLOCK_TYPES = new Set([
+    'oak_log', 'birch_log', 'spruce_log', 'jungle_log', 'acacia_log', 'dark_oak_log', 'mangrove_log', 'cherry_log',
+    'crimson_stem', 'warped_stem',
+    'crafting_table', 'furnace', 'blast_furnace', 'smoker', 'chest', 'trapped_chest', 'ender_chest',
+    'nether_portal', 'end_portal',
+    'coal_ore', 'deepslate_coal_ore', 'iron_ore', 'deepslate_iron_ore', 'gold_ore', 'diamond_ore',
+    'water', 'lava', 'wheat', 'carrots', 'potatoes'
+]);
+
+// Kept outside the Mineflayer object so state serialization does not expose
+// implementation details to the planner. A new id is assigned on every spawn.
+const worldSessions = new WeakMap();
+
+function canStoreSession(bot) {
+    return bot && (typeof bot === 'object' || typeof bot === 'function');
+}
+
+function startWorldSession(bot) {
+    const sessionId = randomUUID();
+    if (canStoreSession(bot)) {
+        worldSessions.set(bot, sessionId);
+    }
+    return sessionId;
+}
+
+function getWorldSessionId(bot) {
+    if (!canStoreSession(bot)) {
+        return randomUUID();
+    }
+
+    let sessionId = worldSessions.get(bot);
+    if (!sessionId) {
+        sessionId = startWorldSession(bot);
+    }
+    return sessionId;
+}
+
+function getWorldIdentity(bot) {
+    const host = process.env.MC_HOST || 'localhost';
+    const port = process.env.MC_PORT || '25565';
+    return {
+        id: process.env.MC_WORLD_ID || `${host}:${port}`,
+        dimension: bot && bot.game && bot.game.dimension != null ? String(bot.game.dimension) : 'unknown',
+        sessionId: getWorldSessionId(bot)
+    };
+}
+
+function isKeyBlockName(name) {
+    return typeof name === 'string' && (KEY_BLOCK_TYPES.has(name) || name.endsWith('_bed'));
+}
+
+function blockName(block) {
+    return block && typeof block.name === 'string' ? block.name : null;
+}
+
+function blockPosition(block) {
+    if (!block || !block.position) return null;
+    const { x, y, z } = block.position;
+    if (![x, y, z].every(Number.isFinite)) return null;
+    return { x: Math.floor(x), y: Math.floor(y), z: Math.floor(z) };
+}
+
+/**
+ * Builds a memory-safe block-change event from a loaded Mineflayer update.
+ * A null new block is deliberately ignored: chunk unloads must never imply a
+ * depleted resource. An old null block is still useful when a loaded key block
+ * first becomes observable.
+ */
+function createBlockChangeObservation(bot, oldBlock, newBlock, observedAt = new Date().toISOString()) {
+    if (!newBlock) return null;
+
+    const oldName = blockName(oldBlock);
+    const newName = blockName(newBlock);
+    if (!newName || oldName === newName) return null;
+    if (!isKeyBlockName(oldName) && !isKeyBlockName(newName)) return null;
+
+    const position = blockPosition(newBlock) || blockPosition(oldBlock);
+    if (!position) return null;
+
+    return {
+        observedAt,
+        world: getWorldIdentity(bot),
+        position,
+        oldName,
+        newName
+    };
+}
+
 function getBotState(bot, options = {}) {
+    const observation = {
+        observedAt: new Date().toISOString(),
+        username: bot && bot.username ? bot.username : null,
+        world: getWorldIdentity(bot)
+    };
+
     if (!bot || !bot.entity) {
-        return { ready: false, message: "Bot is not fully spawned yet." };
+        return {
+            ready: false,
+            message: "Bot is not fully spawned yet.",
+            ...observation,
+            nearbyKeyBlocks: {},
+            // The radius-limited scan below is never an absence proof.
+            nearbyKeyBlocksComplete: false
+        };
     }
 
     const {
@@ -51,14 +154,14 @@ function getBotState(bot, options = {}) {
 
     // 3. Nearby Entities (Mobs, Animals, Players)
     const nearbyEntities = [];
-    for (const entityName in bot.entities) {
+    for (const entityName in bot.entities || {}) {
         const entity = bot.entities[entityName];
         if (!entity || entity === bot.entity) continue;
 
         const dist = entity.position.distanceTo(pos);
         if (dist <= mobRadius) {
             nearbyEntities.push({
-                name: entity.name || entity.username || entity.type,
+                name: entity.username || entity.name || entity.type,
                 type: entity.type, // 'mob', 'animal', 'player', 'object'
                 kind: entity.kind,
                 distance: Math.round(dist * 10) / 10,
@@ -75,22 +178,15 @@ function getBotState(bot, options = {}) {
     const topEntities = nearbyEntities.slice(0, 10);
 
     // 4. Surrounding Key Blocks Search
-    const keyBlockTypes = [
-        'oak_log', 'birch_log', 'spruce_log', 'jungle_log', 'acacia_log', 'dark_oak_log', 'mangrove_log', 'cherry_log',
-        'crafting_table', 'furnace', 'chest', 'bed',
-        'coal_ore', 'deepslate_coal_ore', 'iron_ore', 'deepslate_iron_ore', 'gold_ore', 'diamond_ore',
-        'water', 'lava', 'wheat', 'carrots', 'potatoes'
-    ];
-
     const nearbyBlocksSummary = {};
 
     if (bot.findBlocks) {
         // Search for key blocks in radius
         const foundPositions = bot.findBlocks({
-            matching: (block) => block && keyBlockTypes.includes(block.name),
+            matching: (block) => block && isKeyBlockName(block.name),
             maxDistance: blockRadius,
             count: 35
-        });
+        }) || [];
 
         for (const p of foundPositions) {
             const block = bot.blockAt(p);
@@ -114,17 +210,31 @@ function getBotState(bot, options = {}) {
     }
 
     // 5. Standing Block & Block Below
-    const blockBelow = bot.blockAt(pos.offset(0, -1, 0));
+    const blockBelow = typeof bot.blockAt === 'function'
+        ? bot.blockAt(pos.offset(0, -1, 0))
+        : null;
 
     return {
         ready: true,
+        ...observation,
         stats,
         equipment,
         inventory: inventoryItems,
         standingOn: blockBelow ? blockBelow.name : 'unknown',
         nearbyEntities: topEntities,
-        nearbyKeyBlocks: nearbyBlocksSummary
+        nearbyKeyBlocks: nearbyBlocksSummary,
+        // A bounded scan only reports what is currently loaded and nearby.
+        // Missing keys must not be interpreted as world-wide absence.
+        nearbyKeyBlocksComplete: false
     };
 }
 
-module.exports = { getBotState };
+module.exports = {
+    KEY_BLOCK_TYPES,
+    createBlockChangeObservation,
+    getBotState,
+    getWorldIdentity,
+    getWorldSessionId,
+    isKeyBlockName,
+    startWorldSession
+};

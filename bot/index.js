@@ -14,7 +14,12 @@ try {
 } catch (e) {
     console.warn('[Prismarine Viewer] Optional viewer module unavailable:', e.message);
 }
-const { getBotState } = require('./state');
+const {
+    createBlockChangeObservation,
+    getBotState,
+    getWorldIdentity,
+    startWorldSession
+} = require('./state');
 const { executeCodeSnippet } = require('./sandbox');
 const { executeTask } = require('./skills');
 
@@ -45,22 +50,151 @@ bot.loadPlugin(pathfinder);
 let mcData = null;
 let wsClient = null;
 let reconnectTimer = null;
+let stateUpdateTimer = null;
+let botSpawned = false;
+let botEnded = false;
+let viewerStarted = false;
+
+const STATE_UPDATE_INTERVAL_MS = 30_000;
+const BLOCK_CHANGE_WINDOW_MS = 30_000;
+const MAX_BLOCK_CHANGE_EVENTS_PER_WINDOW = 48;
+const BLOCK_CHANGE_DEDUPE_MS = 750;
+const MAX_BLOCK_CHANGE_DEDUPE_ENTRIES = 256;
+
+let blockChangeWindowStartedAt = 0;
+let blockChangeEventsInWindow = 0;
+const recentBlockChanges = new Map();
+
+function isWebSocketOpen() {
+    return wsClient && wsClient.readyState === WebSocket.OPEN;
+}
+
+function isBotSpawned() {
+    return botSpawned && Boolean(bot.entity);
+}
+
+function clearStateUpdateTimer() {
+    if (stateUpdateTimer) {
+        clearInterval(stateUpdateTimer);
+        stateUpdateTimer = null;
+    }
+}
+
+function clearReconnectTimer() {
+    if (reconnectTimer) {
+        clearInterval(reconnectTimer);
+        reconnectTimer = null;
+    }
+}
+
+function emitStateUpdate() {
+    if (!isWebSocketOpen() || !isBotSpawned()) return false;
+    sendToOrchestrator({
+        type: 'state_update',
+        data: getBotState(bot)
+    });
+    return true;
+}
+
+function startStateUpdates() {
+    clearStateUpdateTimer();
+    if (!isWebSocketOpen() || !isBotSpawned()) return;
+
+    stateUpdateTimer = setInterval(() => {
+        // Do not emit stale observations while dead, disconnected, or before a
+        // new spawn has supplied a fresh world session id.
+        emitStateUpdate();
+    }, STATE_UPDATE_INTERVAL_MS);
+}
+
+function emitWorldJoin() {
+    if (!isWebSocketOpen() || !isBotSpawned()) return;
+    sendToOrchestrator({
+        type: 'event',
+        event: 'world_join',
+        data: { currentState: getBotState(bot) }
+    });
+}
+
+function resetBlockChangeThrottle() {
+    blockChangeWindowStartedAt = 0;
+    blockChangeEventsInWindow = 0;
+    recentBlockChanges.clear();
+}
+
+function shouldEmitBlockChange(change) {
+    const now = Date.now();
+    if (now - blockChangeWindowStartedAt >= BLOCK_CHANGE_WINDOW_MS) {
+        blockChangeWindowStartedAt = now;
+        blockChangeEventsInWindow = 0;
+        recentBlockChanges.clear();
+    }
+
+    // Cap discovery chatter from newly loaded chunks, but never discard an
+    // explicit replacement/removal (e.g. a 64-log mining task).
+    const explicitChange = Boolean(change.oldName);
+    if (!explicitChange && blockChangeEventsInWindow >= MAX_BLOCK_CHANGE_EVENTS_PER_WINDOW) {
+        return false;
+    }
+
+    const { world, position, oldName, newName } = change;
+    const key = `${world.sessionId}:${position.x},${position.y},${position.z}:${oldName || ''}:${newName || ''}`;
+    const previousAt = recentBlockChanges.get(key);
+    if (previousAt && now - previousAt < BLOCK_CHANGE_DEDUPE_MS) {
+        return false;
+    }
+
+    recentBlockChanges.set(key, now);
+    while (recentBlockChanges.size > MAX_BLOCK_CHANGE_DEDUPE_ENTRIES) {
+        recentBlockChanges.delete(recentBlockChanges.keys().next().value);
+    }
+    if (!explicitChange) blockChangeEventsInWindow += 1;
+    return true;
+}
+
+function handleBlockUpdate(oldBlock, newBlock) {
+    if (!isWebSocketOpen() || !isBotSpawned()) return;
+
+    const change = createBlockChangeObservation(bot, oldBlock, newBlock);
+    if (!change || !shouldEmitBlockChange(change)) return;
+
+    sendToOrchestrator({
+        type: 'event',
+        event: 'block_change',
+        data: change
+    });
+}
 
 // Setup Pathfinder movements on spawn
-bot.once('spawn', () => {
+bot.on('spawn', () => {
     console.log(`[Mineflayer] Bot successfully spawned in world as '${bot.username}'!`);
+    // A respawn is a new observation session even if it occurs in the same
+    // world/dimension. This happens before any state or world_join event.
+    startWorldSession(bot);
+    resetBlockChangeThrottle();
+    botEnded = false;
+    botSpawned = true;
+
     mcData = minecraftData(bot.version);
     const defaultMovements = new Movements(bot, mcData);
     bot.pathfinder.setMovements(defaultMovements);
 
-    if (ENABLE_VIEWER) {
+    if (ENABLE_VIEWER && !viewerStarted) {
         try {
             mineflayerViewer(bot, { port: VIEWER_PORT, firstPerson: true });
+            viewerStarted = true;
             console.log(`[Prismarine Viewer] Live 3D web view active on http://localhost:${VIEWER_PORT}`);
         } catch (err) {
             console.error('[Prismarine Viewer] Failed to start web viewer:', err.message);
         }
     }
+
+    // If the bridge is already connected (for example after a respawn), tell
+    // it about the fresh session immediately. Initial connection sends the
+    // equivalent state_update below once the socket opens.
+    emitWorldJoin();
+    emitStateUpdate();
+    startStateUpdates();
 
     // Connect to Python Orchestrator WebSocket Server
     connectToOrchestrator();
@@ -85,6 +219,10 @@ bot.on('health', () => {
     });
 });
 
+// Mineflayer forwards world block updates through the bot, which keeps this
+// listener active even if the underlying world object changes dimension.
+bot.on('blockUpdate', handleBlockUpdate);
+
 bot.on('kicked', (reason) => {
     console.warn(`[Mineflayer] Bot kicked: ${reason}`);
     sendToOrchestrator({
@@ -105,10 +243,17 @@ bot.on('error', (err) => {
 
 bot.on('death', () => {
     console.warn(`[Mineflayer] Bot died in game. Automatically respawning...`);
+    botSpawned = false;
+    clearStateUpdateTimer();
     sendToOrchestrator({
         type: 'event',
         event: 'death',
-        data: { position: bot.entity ? bot.entity.position : null }
+        data: {
+            observedAt: new Date().toISOString(),
+            username: bot.username,
+            world: getWorldIdentity(bot),
+            position: bot.entity ? bot.entity.position : null
+        }
     });
     setTimeout(() => {
         try {
@@ -119,32 +264,40 @@ bot.on('death', () => {
     }, 1000);
 });
 
+bot.on('end', (reason) => {
+    console.warn(`[Mineflayer] Bot connection ended: ${reason || 'unknown reason'}`);
+    botSpawned = false;
+    botEnded = true;
+    clearStateUpdateTimer();
+    clearReconnectTimer();
+});
+
 /**
  * WebSocket Connection Manager
  */
 function connectToOrchestrator() {
+    if (botEnded) return;
     if (wsClient && (wsClient.readyState === WebSocket.OPEN || wsClient.readyState === WebSocket.CONNECTING)) {
         return;
     }
 
     console.log(`[WebSocket Bridge] Connecting to Python Orchestrator at ${WS_URL}...`);
-    wsClient = new WebSocket(WS_URL);
+    const client = new WebSocket(WS_URL);
+    wsClient = client;
 
-    wsClient.on('open', () => {
+    client.on('open', () => {
+        if (wsClient !== client) return;
         console.log(`[WebSocket Bridge] Connected to Python Orchestrator successfully.`);
-        if (reconnectTimer) {
-            clearInterval(reconnectTimer);
-            reconnectTimer = null;
-        }
+        clearReconnectTimer();
 
-        // Send initial bot state
-        sendToOrchestrator({
-            type: 'state_update',
-            data: getBotState(bot)
-        });
+        // Send initial state only after spawn. The state includes the current
+        // world/session identity, so reconnecting does not create a duplicate
+        // world session.
+        emitStateUpdate();
+        startStateUpdates();
     });
 
-    wsClient.on('message', async (rawMessage) => {
+    client.on('message', async (rawMessage) => {
         try {
             const payload = JSON.parse(rawMessage.toString());
             await handleOrchestratorMessage(payload);
@@ -153,18 +306,21 @@ function connectToOrchestrator() {
         }
     });
 
-    wsClient.on('close', () => {
+    client.on('close', () => {
+        if (wsClient !== client) return;
         console.warn(`[WebSocket Bridge] Connection lost to Orchestrator. Will retry in 5s...`);
+        wsClient = null;
+        clearStateUpdateTimer();
         scheduleReconnect();
     });
 
-    wsClient.on('error', (err) => {
+    client.on('error', (err) => {
         console.error(`[WebSocket Bridge Error] ${err.message}`);
     });
 }
 
 function scheduleReconnect() {
-    if (!reconnectTimer) {
+    if (!botEnded && !reconnectTimer) {
         reconnectTimer = setInterval(() => {
             connectToOrchestrator();
         }, 5000);
@@ -172,7 +328,7 @@ function scheduleReconnect() {
 }
 
 function sendToOrchestrator(payload) {
-    if (wsClient && wsClient.readyState === WebSocket.OPEN) {
+    if (isWebSocketOpen()) {
         wsClient.send(JSON.stringify(payload));
     }
 }
