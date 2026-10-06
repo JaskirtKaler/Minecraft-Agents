@@ -285,12 +285,17 @@ except Exception as exc:
 PY
 fi
 
+if [ -f "$ROOT_DIR/server-plugins/jarvis-debug/build.sh" ]; then
+    echo "Building the local read-only inventory debugger..."
+    MINECRAFT_JAVA="$JAVA_BIN" bash "$ROOT_DIR/server-plugins/jarvis-debug/build.sh"
+fi
+
 echo "1/3 Starting Minecraft on 127.0.0.1:$MC_PORT..."
 SERVER_FIFO="$RUN_DIR/server.stdin"
 mkfifo "$SERVER_FIFO"
 (
     cd "$ROOT_DIR/server"
-    exec "$JAVA_BIN" -Xms2G -Xmx2G -jar server.jar --nogui --host 127.0.0.1 --port "$MC_PORT"
+    exec "$JAVA_BIN" -Djarvis.bot.username="$BOT_USERNAME" -Xms2G -Xmx2G -jar server.jar --nogui --host 127.0.0.1 --port "$MC_PORT"
 ) <"$SERVER_FIFO" >"$RUN_DIR/server.log" 2>&1 3>&- &
 SERVER_PID=$!
 exec 3>"$SERVER_FIFO"
@@ -314,6 +319,7 @@ echo
 echo "READY — join Minecraft Java at 127.0.0.1:$MC_PORT"
 echo "Agent: $BOT_USERNAME. In game chat: mine 3 oak logs and drop them to me"
 echo "Memory recall: memory"
+echo "Inventory: chat 'inventory', /jarvisinventory, or right-click $BOT_USERNAME (read-only)."
 echo "Keep this terminal open. Ctrl+C stops the agent and saves/stops the server."
 echo
 while true; do

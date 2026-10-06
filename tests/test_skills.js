@@ -1,6 +1,9 @@
 const assert = require('assert/strict');
+const { Vec3 } = require('../bot/node_modules/vec3');
 const { executeTask } = require('../bot/skills');
 const { runStateTests } = require('./test_state');
+const { runResourceTests } = require('./test_resources');
+const { runNavigationTests } = require('./test_navigation');
 
 function position (x, y, z) {
   return { x, y, z };
@@ -21,6 +24,7 @@ function makeBot ({ logs = 0, candidateCount = 8, recipientVisible = true, useTo
 
   const recipient = { username: 'Pilot6117', position: position(4, 64, 4) };
   const bot = {
+    entity: { position: position(0, 64, 1) },
     inventory: {
       items: () => inventory.filter(item => item.count > 0)
     },
@@ -29,6 +33,8 @@ function makeBot ({ logs = 0, candidateCount = 8, recipientVisible = true, useTo
     },
     entities: recipientVisible ? { recipient } : {},
     pathfinder: {
+      movements: { canDig: false, allow1by1towers: false },
+      getPathTo: () => ({ status: 'success', cost: 1 }),
       async goto (goal) {
         calls.goto.push(goal);
       }
@@ -94,6 +100,25 @@ async function testMineLogs () {
   assert.equal(result.data.blocks_dug, 2);
   assert.equal(calls.digs.length, 2);
   assert.equal(calls.goto[0].constructor.name, 'GoalGetToBlock');
+}
+
+async function testFailedLogPickupDoesNotMineAnotherLog () {
+  const { bot, calls } = makeBot();
+  bot.dig = async block => {
+    calls.digs.push(block.position);
+    bot.entities = { drop: {
+      position: new Vec3(block.position.x + 0.5, block.position.y, block.position.z + 0.5),
+      getDroppedItem: () => ({ name: 'oak_log' })
+    } };
+  };
+  bot.pathfinder.goto = async goal => {
+    if (goal.constructor.name === 'GoalBlock') throw new Error('Drop is no longer reachable');
+    calls.goto.push(goal);
+  };
+  const result = await executeTask(bot, { name: 'mine_logs', args: { item: 'oak_log', count: 2 } });
+  assert.equal(result.status, 'unknown');
+  assert.equal(result.data.error_code, 'PICKUP_NOT_VERIFIED');
+  assert.equal(calls.digs.length, 1, 'Failed pickup must stop the log loop, including recovery route errors.');
 }
 
 async function testGiveExactCount () {
@@ -186,15 +211,32 @@ async function testActionableNoLogsError () {
   assert.equal(result.data.observed_after, 0);
 }
 
+async function testGetAndGiveUsesHeldLogs () {
+  const { bot, calls, inventory } = makeBot({ logs: 5, candidateCount: 0 });
+  const result = await executeTask(bot, {
+    name: 'mine_and_give',
+    args: { item: 'oak_log', count: 3, recipient: 'Pilot6117', collection_mode: 'ensure_inventory' }
+  });
+  assert.equal(result.verified, true, result.message);
+  assert.equal(result.data.mine.observed_mined, 0);
+  assert.equal(calls.digs.length, 0);
+  assert.equal(calls.tosses[0].count, 3);
+  assert.equal(inventory[0].count, 2);
+}
+
 async function run () {
   await testMineLogs();
+  await testFailedLogPickupDoesNotMineAnotherLog();
   await testGiveExactCount();
   await testNoOverDelivery();
   await testEntityFallback();
   await testSafeTossStackFallback();
   await testMineAndGive();
+  await testGetAndGiveUsesHeldLogs();
   await testActionableNoLogsError();
   await runStateTests();
+  await runResourceTests();
+  await runNavigationTests();
   console.log('✓ deterministic skills tests passed');
 }
 

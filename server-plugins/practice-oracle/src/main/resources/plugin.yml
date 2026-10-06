@@ -1,0 +1,8 @@
+name: PracticeOracle
+version: 0.1.0
+main: dev.minecraftagents.practice.PracticeOracle
+api-version: '1.20'
+description: Console-only oracle for guarded disposable practice worlds. Never install on the real world.
+commands:
+  practiceoracle:
+    description: Internal fixture/oracle command for the headless practice runner.

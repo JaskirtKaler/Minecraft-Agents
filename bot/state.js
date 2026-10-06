@@ -11,7 +11,7 @@ const KEY_BLOCK_TYPES = new Set([
     'crafting_table', 'furnace', 'blast_furnace', 'smoker', 'chest', 'trapped_chest', 'ender_chest',
     'nether_portal', 'end_portal',
     'coal_ore', 'deepslate_coal_ore', 'iron_ore', 'deepslate_iron_ore', 'gold_ore', 'diamond_ore',
-    'water', 'lava', 'wheat', 'carrots', 'potatoes'
+    'water', 'lava', 'wheat', 'carrots', 'potatoes', 'stone', 'cobblestone'
 ]);
 
 // Kept outside the Mineflayer object so state serialization does not expose
@@ -183,10 +183,17 @@ function getBotState(bot, options = {}) {
     if (bot.findBlocks) {
         // Search for key blocks in radius
         const foundPositions = bot.findBlocks({
-            matching: (block) => block && isKeyBlockName(block.name),
+            matching: (block) => block && isKeyBlockName(block.name) && !['stone', 'cobblestone'].includes(block.name),
             maxDistance: blockRadius,
             count: 35
         }) || [];
+        // Common stone must not crowd chests, crafting stations, and hazards
+        // out of the bounded landmark scan.
+        foundPositions.push(...(bot.findBlocks({
+            matching: block => block && ['stone', 'cobblestone'].includes(block.name),
+            maxDistance: blockRadius,
+            count: 12
+        }) || []));
 
         for (const p of foundPositions) {
             const block = bot.blockAt(p);
@@ -221,6 +228,12 @@ function getBotState(bot, options = {}) {
         equipment,
         inventory: inventoryItems,
         standingOn: blockBelow ? blockBelow.name : 'unknown',
+        gameKnowledge: {
+            source: 'minecraft-data for ' + bot.version,
+            cobblestone: 'Mine exposed stone/cobblestone with a harvest-capable pickaxe without Silk Touch; verify pickup.',
+            navigation: 'Walking cannot dig. Bounded controlled uphill staircase escape may clear terrain; no towers or mining underfoot.',
+            wheat: 'Crop age must be checked before harvest; farming execution is not a supported skill yet.'
+        },
         nearbyEntities: topEntities,
         nearbyKeyBlocks: nearbyBlocksSummary,
         // A bounded scan only reports what is currently loaded and nearby.

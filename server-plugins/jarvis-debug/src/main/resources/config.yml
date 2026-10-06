@@ -1,0 +1,6 @@
+# Root start.sh supplies the bot username from .env as a Java system property.
+# This fallback applies when launching the Minecraft server manually.
+bot-username: AI_Agent
+allowed-viewers:
+  - Pilot6117
+refresh-ticks: 10

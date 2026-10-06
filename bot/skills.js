@@ -11,12 +11,20 @@
  */
 
 const { goals } = require('mineflayer-pathfinder');
+const { runOperation } = require('./operations');
+const { mineResource, depositItem, resolveChest } = require('./resources');
+const { walkTo, moveToGoal, executeStaircase } = require('./navigation');
+const { recoverPickup } = require('./pickup');
 
 const DEFAULT_LOG = 'oak_log';
 const DEFAULT_MAX_DISTANCE = 32;
 const MAX_MAX_DISTANCE = 128;
 const MAX_COUNT = 2304;
 const MAX_TASK_DURATION_MS = 180000;
+const RESOURCE_NAMES = new Set([
+  'oak_log', 'birch_log', 'spruce_log', 'jungle_log', 'acacia_log', 'dark_oak_log',
+  'mangrove_log', 'cherry_log', 'crimson_stem', 'warped_stem', 'cobblestone', 'dirt'
+]);
 
 class TaskError extends Error {
   constructor (code, message, data = {}) {
@@ -87,11 +95,32 @@ function parseTask (task) {
 
   const { name } = task;
   const args = task.args;
-  if (!['mine_logs', 'give_item', 'mine_and_give'].includes(name)) {
+  if (name === 'execute_plan') {
+    if (!args || !Array.isArray(args.steps) || args.steps.length < 1 || args.steps.length > 12) {
+      throw new TaskError('INVALID_PLAN', 'A plan must have 1–12 typed steps.');
+    }
+    const steps = args.steps.map(step => {
+      if (!['mine_logs', 'mine_resource', 'deposit_item', 'give_item'].includes(step?.name)) {
+        throw new TaskError('INVALID_PLAN', 'Plans may only compose collection and delivery skills.');
+      }
+      const parsed = parseTask(step);
+      if (parsed.count > 64 || !RESOURCE_NAMES.has(parsed.item)) {
+        throw new TaskError('INVALID_PLAN', 'Plan resources must be supported and each count must be 1–64.');
+      }
+      return parsed;
+    });
+    return { name, steps };
+  }
+  if (!['mine_logs', 'mine_resource', 'give_item', 'mine_and_give', 'deposit_item', 'mine_and_deposit', 'escape_staircase'].includes(name)) {
     throw new TaskError('UNKNOWN_TASK', `Unsupported task '${name}'.`, { name });
   }
   if (!args || typeof args !== 'object' || Array.isArray(args)) {
     throw new TaskError('INVALID_TASK', 'Task args must be an object.', { name });
+  }
+  if (name === 'escape_staircase') {
+    const rise = args.rise ?? 4;
+    if (!Number.isSafeInteger(rise) || rise < 1 || rise > 8) throw new TaskError('INVALID_ARGUMENT', 'Staircase rise must be 1–8 blocks.');
+    return { name, rise };
   }
 
   const count = positiveInteger(args.count, 'count');
@@ -100,10 +129,14 @@ function parseTask (task) {
     name,
     item,
     count,
-    maxDistance: maxDistance(args.max_distance)
+    maxDistance: maxDistance(args.max_distance),
+    collectionMode: args.collection_mode ?? 'additional'
   };
+  if (!['additional', 'ensure_inventory'].includes(parsed.collectionMode)) {
+    throw new TaskError('INVALID_ARGUMENT', 'collection_mode must be additional or ensure_inventory.');
+  }
 
-  if (name === 'mine_logs' || name === 'mine_and_give') {
+  if (name === 'mine_logs') {
     if (!isLogName(item)) {
       throw new TaskError(
         'INVALID_LOG_ITEM',
@@ -111,6 +144,10 @@ function parseTask (task) {
         { item }
       );
     }
+  }
+  if (['mine_resource', 'mine_and_give', 'mine_and_deposit'].includes(name) &&
+      !isLogName(item) && !['cobblestone', 'dirt'].includes(item)) {
+    throw new TaskError('UNSUPPORTED_RESOURCE', 'Verified collection supports logs, dirt, and cobblestone; other resources need a tested skill.', { item });
   }
 
   if (name === 'give_item' || name === 'mine_and_give') {
@@ -171,44 +208,7 @@ async function waitForInventoryChange (bot, item, previousCount, direction, maxT
 }
 
 async function gotoWithTimeout (bot, goal, timeoutMs) {
-  let timeoutId;
-  const pathPromise = bot.pathfinder.goto(goal);
-  const timeoutPromise = new Promise((_, reject) => {
-    timeoutId = setTimeout(() => {
-      try {
-        if (typeof bot.pathfinder.setGoal === 'function') bot.pathfinder.setGoal(null);
-      } catch (_) {
-        // The timeout error below is still the actionable result.
-      }
-      reject(new TaskError('NAVIGATION_TIMEOUT', `Could not reach the target within ${Math.ceil(timeoutMs / 1000)} seconds.`));
-    }, timeoutMs);
-  });
-
-  try {
-    await Promise.race([pathPromise, timeoutPromise]);
-  } finally {
-    clearTimeout(timeoutId);
-  }
-}
-
-async function runWithTaskTimeout (bot, work) {
-  let timeoutId;
-  const timeoutPromise = new Promise((_, reject) => {
-    timeoutId = setTimeout(() => {
-      try {
-        if (bot.pathfinder && typeof bot.pathfinder.setGoal === 'function') bot.pathfinder.setGoal(null);
-      } catch (_) {
-        // The timeout error below is still the actionable result.
-      }
-      reject(new TaskError('TASK_TIMEOUT', `Task exceeded ${MAX_TASK_DURATION_MS / 1000} seconds and was stopped.`));
-    }, MAX_TASK_DURATION_MS);
-  });
-
-  try {
-    return await Promise.race([work, timeoutPromise]);
-  } finally {
-    clearTimeout(timeoutId);
-  }
+  return walkTo(bot, goal, { timeoutMs });
 }
 
 function positionKey (position) {
@@ -220,7 +220,7 @@ function formatAttemptErrors (attemptErrors) {
   return ` Last attempts: ${attemptErrors.slice(-3).join(' | ')}.`;
 }
 
-async function mineLogs (bot, { item, count, maxDistance: searchDistance }) {
+async function mineLogs (bot, { item, count, maxDistance: searchDistance, collectionMode = 'additional' }, progress = () => {}) {
   assertPathfinder(bot);
   if (typeof bot.findBlocks !== 'function' || typeof bot.blockAt !== 'function') {
     throw new TaskError('WORLD_UNAVAILABLE', 'The bot cannot currently inspect nearby blocks.');
@@ -230,7 +230,7 @@ async function mineLogs (bot, { item, count, maxDistance: searchDistance }) {
   }
 
   const before = countItem(bot, item);
-  const targetAfter = before + count;
+  const targetAfter = collectionMode === 'ensure_inventory' ? count : before + count;
   const attemptErrors = [];
   const attemptedPositions = new Set();
   let blocksDug = 0;
@@ -260,6 +260,7 @@ async function mineLogs (bot, { item, count, maxDistance: searchDistance }) {
       if (!block || block.name !== item) continue;
 
       try {
+        progress(`walking to ${item}; holding ${countItem(bot, item)}/${targetAfter}`);
         // GoalGetToBlock ends adjacent to the solid log; GoalBlock would ask
         // pathfinder to stand inside the log and is therefore not appropriate.
         await gotoWithTimeout(bot, new goals.GoalGetToBlock(
@@ -273,19 +274,29 @@ async function mineLogs (bot, { item, count, maxDistance: searchDistance }) {
           continue;
         }
 
+        const axes = inventoryItems(bot).filter(tool => tool.name.endsWith('_axe'));
+        axes.sort((a, b) => typeof block.digTime === 'function' ? block.digTime(a.type) - block.digTime(b.type) : 0);
+        if (axes[0] && typeof bot.equip === 'function') await bot.equip(axes[0], 'hand');
+
         const beforeDig = countItem(bot, item);
+        progress('mining and collecting ' + item);
         await bot.dig(block);
-        const afterDig = await waitForInventoryChange(bot, item, beforeDig, 'increase');
+        let afterDig = await waitForInventoryChange(bot, item, beforeDig, 'increase');
 
         if (afterDig <= beforeDig) {
-          attemptErrors.push(`${positionKey(block.position)} was broken but no ${item} entered inventory`);
-          continue;
+          progress('recovering a dropped ' + item + ' on a safe route');
+          afterDig = await recoverPickup(bot, item, beforeDig, block.position);
+          if (afterDig <= beforeDig) {
+            throw new TaskError('PICKUP_NOT_VERIFIED', `${item} broke but pickup was not confirmed. I stopped before mining more.`,
+              countEvidence(item, count, before, countItem(bot, item)));
+          }
         }
 
         blocksDug += 1;
         madeProgress = true;
         break;
       } catch (error) {
+        if (['PICKUP_NOT_VERIFIED', 'TASK_TIMEOUT', 'CANCELLED'].includes(error.code)) throw error;
         attemptErrors.push(`${positionKey(block.position)}: ${error.message || error}`);
       }
     }
@@ -309,10 +320,12 @@ async function mineLogs (bot, { item, count, maxDistance: searchDistance }) {
   const after = countItem(bot, item);
   const observedMined = after - before;
   return {
-    message: `Mined ${observedMined} ${item}.`,
+    message: collectionMode === 'ensure_inventory' ? `Holding ${after} ${item}; collected ${observedMined} more.` : `Mined ${observedMined} ${item}.`,
     data: {
       ...countEvidence(item, count, before, after),
       observed_mined: observedMined,
+      collection_mode: collectionMode,
+      target_count: targetAfter,
       blocks_dug: blocksDug,
       max_distance: searchDistance
     }
@@ -350,9 +363,9 @@ function findPlayerEntity (bot, username) {
   return null;
 }
 
-async function giveItem (bot, { item, count, recipient }) {
+async function giveItem (bot, { item, count, recipient }, progress = () => {}) {
   assertPathfinder(bot);
-  const before = countItem(bot, item);
+  let before = countItem(bot, item);
   const evidence = () => countEvidence(item, count, before, countItem(bot, item));
 
   if (before < count) {
@@ -372,14 +385,16 @@ async function giveItem (bot, { item, count, recipient }) {
     );
   }
 
+  let navigation;
   try {
-    await gotoWithTimeout(bot, new goals.GoalNear(
+    navigation = await moveToGoal(bot, new goals.GoalNear(
       target.position.x,
       target.position.y,
       target.position.z,
       2
-    ), 45000);
+    ), progress);
   } catch (error) {
+    if (['TASK_TIMEOUT', 'CANCELLED'].includes(error.code)) throw error;
     throw new TaskError(
       'RECIPIENT_UNREACHABLE',
       `Could not reach '${recipient}' to hand over ${item}: ${error.message || error}.`,
@@ -397,6 +412,10 @@ async function giveItem (bot, { item, count, recipient }) {
       { ...evidence(), recipient }
     );
   }
+
+  // Escaping may collect stone. Measure the toss itself, not the entire trip.
+  before = countItem(bot, item);
+  if (before < count) throw new TaskError('INSUFFICIENT_ITEMS', 'The items are no longer available for the handoff.', { ...evidence(), recipient });
 
   const itemStack = firstInventoryItem(bot, item);
   if (!itemStack || !Number.isSafeInteger(itemStack.type)) {
@@ -445,14 +464,15 @@ async function giveItem (bot, { item, count, recipient }) {
     data: {
       ...evidence(),
       recipient,
-      delivery: 'dropped_near_recipient'
+      delivery: 'dropped_near_recipient',
+      navigation
     }
   };
 }
 
-async function mineAndGive (bot, args) {
-  const mined = await mineLogs(bot, args);
-  const given = await giveItem(bot, args);
+async function mineAndGive (bot, args, progress = () => {}) {
+  const mined = isLogName(args.item) ? await mineLogs(bot, args, progress) : await mineResource(bot, args, progress);
+  const given = await giveItem(bot, args, progress);
 
   return {
     message: `${mined.message} ${given.message}`,
@@ -471,18 +491,62 @@ async function mineAndGive (bot, args) {
  * All failures are returned as structured values so callers can safely relay a
  * useful status message instead of claiming completion based on code execution.
  */
-async function executeTask (bot, task) {
+async function executeTask (bot, task, options = {}) {
+  let parsed = null;
+  let inventoryBefore = null;
   try {
-    const parsed = parseTask(task);
-    let result;
-
-    if (parsed.name === 'mine_logs') {
-      result = await runWithTaskTimeout(bot, mineLogs(bot, parsed));
-    } else if (parsed.name === 'give_item') {
-      result = await runWithTaskTimeout(bot, giveItem(bot, parsed));
-    } else {
-      result = await runWithTaskTimeout(bot, mineAndGive(bot, parsed));
-    }
+    parsed = parseTask(task);
+    inventoryBefore = parsed.item ? countItem(bot, parsed.item) : null;
+    const progress = options.onProgress || (() => {});
+    const result = await runOperation(bot, async guarded => {
+      progress('starting verified ' + parsed.name);
+      if (parsed.name === 'execute_plan') {
+        const completed = [];
+        const deposits = parsed.steps.filter(step => step.name === 'deposit_item');
+        const mineStone = parsed.steps.some(step => step.item === 'cobblestone' && step.name === 'mine_resource' &&
+          (step.collectionMode !== 'ensure_inventory' || countItem(guarded, step.item) < step.count));
+        if (mineStone && !guarded.inventory.items().some(item => item.name.endsWith('_pickaxe') &&
+            !require('./knowledge').hasSilkTouch(item))) throw new TaskError('TOOL_REQUIRED', 'This plan needs a pickaxe before any collection starts.');
+        let chest;
+        if (deposits.length) chest = await resolveChest(guarded, {
+          maxDistance: Math.min(...deposits.map(step => step.maxDistance)), items: deposits
+        }, progress);
+        for (let index = 0; index < parsed.steps.length; index++) {
+          const step = parsed.steps[index];
+          const stage = phase => progress(`step ${index + 1}/${parsed.steps.length}: ${step.item}: ${phase}`);
+          stage(step.name);
+          try {
+            let result;
+            if (step.name === 'mine_logs') result = await mineLogs(guarded, step, stage);
+            else if (step.name === 'mine_resource') result = await mineResource(guarded, step, stage);
+            else if (step.name === 'give_item') result = await giveItem(guarded, step, stage);
+            else result = await depositItem(guarded, step, chest, stage);
+            completed.push({ name: step.name, item: step.item, count: step.count, data: result.data });
+          } catch (error) {
+            error.data = { ...(error.data || {}), completed_steps: completed, failed_step: index + 1, total_steps: parsed.steps.length };
+            throw error;
+          }
+        }
+        return { message: `Verified all ${completed.length} resource-plan steps.`, data: { completed_steps: completed, total_steps: completed.length } };
+      }
+      if (parsed.name === 'escape_staircase') {
+        const position = guarded.entity.position;
+        const navigation = await executeStaircase(guarded, new goals.GoalY(Math.floor(position.y) + parsed.rise), progress);
+        return { message: `Made a controlled staircase ${parsed.rise} blocks up.`, data: navigation };
+      }
+      if (parsed.name === 'mine_logs') return mineLogs(guarded, parsed, progress);
+      if (parsed.name === 'mine_resource') return mineResource(guarded, parsed, progress);
+      if (parsed.name === 'give_item') return giveItem(guarded, parsed, progress);
+      if (parsed.name === 'mine_and_give') return mineAndGive(guarded, parsed, progress);
+      if (parsed.name === 'deposit_item') return depositItem(guarded, parsed, null, progress);
+      // Reach/inspect the destination first, using controlled escape if needed.
+      const chest = await resolveChest(guarded, parsed, progress);
+      const mined = isLogName(parsed.item) ? await mineLogs(guarded, parsed, progress) : await mineResource(guarded, parsed, progress, { baseline: inventoryBefore });
+      const deposited = await depositItem(guarded, parsed, chest, progress);
+      return { message: mined.message + ' ' + deposited.message, data: {
+        item: parsed.item, requested_count: parsed.count, mine: mined.data, deposit: deposited.data
+      } };
+    }, { timeoutMs: options.timeoutMs || MAX_TASK_DURATION_MS });
 
     return {
       success: true,
@@ -493,13 +557,18 @@ async function executeTask (bot, task) {
   } catch (error) {
     const taskError = error instanceof TaskError
       ? error
-      : new TaskError('TASK_FAILED', error && error.message ? error.message : String(error));
+      : new TaskError(error.code || 'TASK_FAILED', error && error.message ? error.message : String(error), error.data || {});
+    let evidence = {};
+    if (parsed && inventoryBefore != null) {
+      try { evidence = countEvidence(parsed.item, parsed.count, inventoryBefore, countItem(bot, parsed.item)); } catch (_) {}
+    }
 
     return {
       success: false,
       verified: false,
+      status: ['TASK_TIMEOUT', 'CANCELLED', 'DEPOSIT_NOT_VERIFIED', 'PICKUP_NOT_VERIFIED'].includes(taskError.code) ? 'unknown' : 'failed',
       message: taskError.message,
-      data: taskError.data || {}
+      data: { ...evidence, ...(taskError.data || {}), error_code: taskError.code }
     };
   }
 }

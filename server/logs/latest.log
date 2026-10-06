@@ -1,99 +1,95 @@
-[11:40:32] [ServerMain/WARN]: [oshi.util.platform.mac.SysctlUtil] Failed sysctl call: hw.cpufrequency, Error code: 2
-[11:40:37] [ServerMain/INFO]: Environment: authHost='https://authserver.mojang.com', accountsHost='https://api.mojang.com', sessionHost='https://sessionserver.mojang.com', servicesHost='https://api.minecraftservices.com', name='PROD'
-[11:40:37] [ServerMain/INFO]: Loaded 7 recipes
-[11:40:37] [Server thread/INFO]: Starting minecraft server version 1.20.1
-[11:40:37] [Server thread/INFO]: Loading properties
-[11:40:37] [Server thread/INFO]: This server is running Purpur version git-Purpur-2062 (MC: 1.20.1) (Implementing API version 1.20.1-R0.1-SNAPSHOT) (Git: f6fd5f6 on HEAD)
-[11:40:38] [Server thread/INFO]: Server Ping Player Sample Count: 12
-[11:40:38] [Server thread/INFO]: Using 4 threads for Netty based IO
-[11:40:38] [Server thread/INFO]: [ChunkTaskScheduler] Chunk system is using 1 I/O threads, 4 worker threads, and gen parallelism of 4 threads
-[11:40:38] [Server thread/WARN]: [Pufferfish] Will not enable SIMD! These optimizations are only safely supported on Java 17, Java 18, and Java 19.
-[11:40:38] [Server thread/INFO]: Default game type: SURVIVAL
-[11:40:38] [Server thread/INFO]: Generating keypair
-[11:40:38] [Server thread/INFO]: Starting Minecraft server on 127.0.0.1:25565
-[11:40:38] [Server thread/INFO]: Using default channel type
-[11:40:38] [Server thread/INFO]: Paper: Using libdeflate (macOS ARM64 / Apple Silicon) compression from Velocity.
-[11:40:38] [Server thread/INFO]: Paper: Using native (macOS ARM64 / Apple Silicon) cipher from Velocity.
-[11:40:38] [Server thread/INFO]: [ViaVersion] Loading server plugin ViaVersion v5.12.0
-[11:40:38] [Server thread/INFO]: [ViaVersion] ViaVersion 5.12.0 is now loaded. Registering protocol transformers and injecting...
-[11:40:38] [Server thread/INFO]: [ViaBackwards] Loading translations...
-[11:40:38] [Server thread/INFO]: [ViaBackwards] Registering protocols...
-[11:40:39] [Server thread/INFO]: [spark] Loading server plugin spark v1.10.189
-[11:40:39] [Server thread/INFO]: [ViaBackwards] Loading server plugin ViaBackwards v5.12.0
-[11:40:39] [Server thread/INFO]: Server permissions file permissions.yml is empty, ignoring it
-[11:40:39] [Server thread/WARN]: **** SERVER IS RUNNING IN OFFLINE/INSECURE MODE!
-[11:40:39] [Server thread/WARN]: The server will make no attempt to authenticate usernames. Beware.
-[11:40:39] [Server thread/WARN]: While this makes the game possible to play without internet access, it also opens up the ability for hackers to connect with any username they choose.
-[11:40:39] [Server thread/WARN]: To change this, set "online-mode" to "true" in the server.properties file.
-[11:40:39] [Server thread/INFO]: Preparing level "world"
-[11:40:39] [Server thread/INFO]: Preparing start region for dimension minecraft:overworld
-[11:40:39] [Server thread/INFO]: Time elapsed: 67 ms
-[11:40:39] [Server thread/INFO]: Preparing start region for dimension minecraft:the_nether
-[11:40:39] [Server thread/INFO]: Time elapsed: 8 ms
-[11:40:39] [Server thread/INFO]: Preparing start region for dimension minecraft:the_end
-[11:40:39] [Server thread/INFO]: Time elapsed: 8 ms
-[11:40:39] [Server thread/INFO]: [ViaVersion] Enabling ViaVersion v5.12.0
-[11:40:39] [Server thread/INFO]: [ViaVersion] ViaVersion detected server version: 1.20-1.20.1 (763)
-[11:40:39] [Server thread/INFO]: [spark] Enabling spark v1.10.189
-[11:40:39] [Server thread/INFO]: [spark] Using Paper ServerTickStartEvent for tick monitoring
-[11:40:39] [Server thread/INFO]: [spark] Starting background profiler...
-[11:40:40] [Server thread/INFO]: [ViaBackwards] Enabling ViaBackwards v5.12.0
-[11:40:40] [Server thread/INFO]: Running delayed init tasks
-[11:40:40] [Server thread/INFO]: Done (2.623s)! For help, type "help"
-[11:40:40] [Craft Scheduler Thread - 2 - ViaVersion/INFO]: [ViaVersion] Finished mapping loading, shutting down loader executor.
-[11:40:42] [User Authenticator #0/INFO]: UUID of player AI_Agent is 164110f0-1d6f-3f5d-92d1-eceb1c848e7e
-[11:40:42] [Server thread/INFO]: AI_Agent joined the game
-[11:40:42] [Server thread/INFO]: AI_Agent[/127.0.0.1:52725] logged in with entity id 230 at ([world]18.41802146372394, 81.0, 0.4999999999998842)
-[11:41:03] [User Authenticator #0/INFO]: UUID of player Pilot6117 is c1e12106-86e0-3afb-b973-727ad6bdb625
-[11:41:03] [Server thread/INFO]: Pilot6117 joined the game
-[11:41:03] [Server thread/INFO]: Pilot6117[/127.0.0.1:52772] logged in with entity id 260 at ([world]15.43951034704161, 79.0, 0.7694151835373106)
-[11:41:22] [Async Chat Thread - #1/INFO]: [Not Secure] <Pilot6117> Hello jarvis Can you get 10 blocks of oak wood logs and drop them to me
-[11:41:22] [Async Chat Thread - #0/INFO]: [Not Secure] <AI_Agent> Starting verified task: mine_and_give.
-[11:42:51] [Async Chat Thread - #2/INFO]: [Not Secure] <AI_Agent> ✅ Mined 10 oak_log. Dropped exactly 10 oak_log near Pilot6117.
-[11:44:05] [Async Chat Thread - #5/INFO]: [Not Secure] <Pilot6117> Fantastic i dropped you a pickaxe got get some cobble stone and drop it in the chest right next to you currently
-[11:44:05] [Async Chat Thread - #5/INFO]: [Not Secure] <AI_Agent> Planning objective: 'Fantastic i dropped you a pickaxe got get some cobble stone and drop it in the chest right next to you currently'...
-[11:48:28] [Async Chat Thread - #7/INFO]: [Not Secure] <AI_Agent> ❌ Failed: Error: Code execution timed out after 30 seconds.
-[11:48:28] [Async Chat Thread - #7/INFO]: [Not Secure] <AI_Agent>     at Timeout.<anonymous> (/Users/jaskirtkaler/Github Repo/Minecraft-Agents/bot/sandbox.js:72:20)
-[11:48:28] [Async Chat Thread - #7/INFO]: [Not Secure] <AI_Agent>     at listOnTimeout (node:inte
-[11:48:40] [Async Chat Thread - #6/INFO]: [Not Secure] <AI_Agent> Mined stone. Looking for cobblestone...
-[11:52:09] [Async Chat Thread - #9/INFO]: [Not Secure] <Pilot6117> when you mine stone it becomes cobblestone
-[11:52:09] [Async Chat Thread - #8/INFO]: [Not Secure] <AI_Agent> Planning objective: 'when you mine stone it becomes cobblestone'...
-[11:53:03] [Async Chat Thread - #9/INFO]: [Not Secure] <AI_Agent> Mining stone to get cobblestone...
-[11:53:05] [Async Chat Thread - #8/INFO]: [Not Secure] <AI_Agent> Successfully mined stone!
-[11:53:05] [Async Chat Thread - #9/INFO]: [Not Secure] <AI_Agent> ⚠️ The attempt finished, but I could not verify the requested world state.
-[11:53:05] [Server thread/INFO]: AI_Agent has made the advancement [Stone Age]
-[11:56:23] [Async Chat Thread - #10/INFO]: [Not Secure] <Pilot6117> there is no cobble stone in the chest the job is not finished is something wrong?
-[11:59:37] [Server thread/INFO]: AI_Agent lost connection: Disconnected
-[11:59:37] [Server thread/INFO]: AI_Agent left the game
-[11:59:45] [Server thread/INFO]: Stopping the server
-[11:59:45] [Server thread/INFO]: Stopping server
-[11:59:45] [Server thread/INFO]: [ViaBackwards] Disabling ViaBackwards v5.12.0
-[11:59:45] [Server thread/INFO]: [spark] Disabling spark v1.10.189
-[11:59:45] [Server thread/INFO]: [ViaVersion] Disabling ViaVersion v5.12.0
-[11:59:45] [Server thread/INFO]: [ViaVersion] ViaVersion has been disabled; uninjected the platform and shut down the scheduler.
-[11:59:45] [Server thread/INFO]: Saving players
-[11:59:45] [Server thread/INFO]: Pilot6117 lost connection: Server closed
-[11:59:45] [Server thread/INFO]: Pilot6117 left the game
-[11:59:45] [Server thread/INFO]: Saving worlds
-[11:59:45] [Server thread/INFO]: Saving chunks for level 'ServerLevel[world]'/minecraft:overworld
-[11:59:45] [Server thread/INFO]: [ChunkHolderManager] Waiting 60s for chunk system to halt for world 'world'
-[11:59:45] [Server thread/INFO]: [ChunkHolderManager] Halted chunk system for world 'world'
-[11:59:45] [Server thread/INFO]: [ChunkHolderManager] Saving all chunkholders for world 'world'
-[11:59:45] [Server thread/INFO]: [ChunkHolderManager] Saved 402 block chunks, 127 entity chunks, 0 poi chunks in world 'world' in 0.13s
-[11:59:45] [Server thread/INFO]: ThreadedAnvilChunkStorage (world): All chunks are saved
-[11:59:45] [Server thread/INFO]: Saving chunks for level 'ServerLevel[world_nether]'/minecraft:the_nether
-[11:59:45] [Server thread/INFO]: [ChunkHolderManager] Waiting 60s for chunk system to halt for world 'world_nether'
-[11:59:45] [Server thread/INFO]: [ChunkHolderManager] Halted chunk system for world 'world_nether'
-[11:59:45] [Server thread/INFO]: [ChunkHolderManager] Saving all chunkholders for world 'world_nether'
-[11:59:45] [Server thread/INFO]: [ChunkHolderManager] Saved 0 block chunks, 15 entity chunks, 0 poi chunks in world 'world_nether' in 0.01s
-[11:59:45] [Server thread/INFO]: ThreadedAnvilChunkStorage (DIM-1): All chunks are saved
-[11:59:45] [Server thread/INFO]: Saving chunks for level 'ServerLevel[world_the_end]'/minecraft:the_end
-[11:59:45] [Server thread/INFO]: [ChunkHolderManager] Waiting 60s for chunk system to halt for world 'world_the_end'
-[11:59:45] [Server thread/INFO]: [ChunkHolderManager] Halted chunk system for world 'world_the_end'
-[11:59:45] [Server thread/INFO]: [ChunkHolderManager] Saving all chunkholders for world 'world_the_end'
-[11:59:45] [Server thread/INFO]: [ChunkHolderManager] Saved 10 block chunks, 10 entity chunks, 0 poi chunks in world 'world_the_end' in 0.01s
-[11:59:45] [Server thread/INFO]: ThreadedAnvilChunkStorage (DIM1): All chunks are saved
-[11:59:45] [Server thread/INFO]: ThreadedAnvilChunkStorage: All dimensions are saved
-[11:59:45] [Server thread/INFO]: Flushing Chunk IO
-[11:59:45] [Server thread/INFO]: Closing Thread Pool
-[11:59:45] [Server thread/INFO]: Closing Server
+[11:53:40] [ServerMain/WARN]: [oshi.util.platform.mac.SysctlUtil] Failed sysctl call: hw.cpufrequency, Error code: 2
+[11:53:43] [ServerMain/INFO]: Environment: authHost='https://authserver.mojang.com', accountsHost='https://api.mojang.com', sessionHost='https://sessionserver.mojang.com', servicesHost='https://api.minecraftservices.com', name='PROD'
+[11:53:43] [ServerMain/INFO]: Loaded 7 recipes
+[11:53:43] [Server thread/INFO]: Starting minecraft server version 1.20.1
+[11:53:43] [Server thread/INFO]: Loading properties
+[11:53:43] [Server thread/INFO]: This server is running Purpur version git-Purpur-2062 (MC: 1.20.1) (Implementing API version 1.20.1-R0.1-SNAPSHOT) (Git: f6fd5f6 on HEAD)
+[11:53:44] [Server thread/INFO]: Using 4 threads for Netty based IO
+[11:53:44] [Server thread/INFO]: Server Ping Player Sample Count: 12
+[11:53:44] [Server thread/INFO]: [ChunkTaskScheduler] Chunk system is using 1 I/O threads, 4 worker threads, and gen parallelism of 4 threads
+[11:53:44] [Server thread/WARN]: [Pufferfish] Will not enable SIMD! These optimizations are only safely supported on Java 17, Java 18, and Java 19.
+[11:53:44] [Server thread/INFO]: Default game type: SURVIVAL
+[11:53:44] [Server thread/INFO]: Generating keypair
+[11:53:44] [Server thread/INFO]: Starting Minecraft server on 127.0.0.1:25565
+[11:53:44] [Server thread/INFO]: Using default channel type
+[11:53:44] [Server thread/INFO]: Paper: Using libdeflate (macOS ARM64 / Apple Silicon) compression from Velocity.
+[11:53:44] [Server thread/INFO]: Paper: Using native (macOS ARM64 / Apple Silicon) cipher from Velocity.
+[11:53:45] [Server thread/INFO]: [ViaVersion] Loading server plugin ViaVersion v5.12.0
+[11:53:45] [Server thread/INFO]: [ViaVersion] ViaVersion 5.12.0 is now loaded. Registering protocol transformers and injecting...
+[11:53:45] [Server thread/INFO]: [ViaBackwards] Loading translations...
+[11:53:45] [Server thread/INFO]: [ViaBackwards] Registering protocols...
+[11:53:45] [Server thread/INFO]: [spark] Loading server plugin spark v1.10.191
+[11:53:45] [Server thread/INFO]: [ViaBackwards] Loading server plugin ViaBackwards v5.12.0
+[11:53:45] [Server thread/INFO]: [JarvisDebug] Loading server plugin JarvisDebug v0.1.0
+[11:53:45] [Server thread/INFO]: Server permissions file permissions.yml is empty, ignoring it
+[11:53:45] [Server thread/WARN]: **** SERVER IS RUNNING IN OFFLINE/INSECURE MODE!
+[11:53:45] [Server thread/WARN]: The server will make no attempt to authenticate usernames. Beware.
+[11:53:45] [Server thread/WARN]: While this makes the game possible to play without internet access, it also opens up the ability for hackers to connect with any username they choose.
+[11:53:45] [Server thread/WARN]: To change this, set "online-mode" to "true" in the server.properties file.
+[11:53:45] [Server thread/INFO]: Preparing level "world"
+[11:53:45] [Server thread/INFO]: Preparing start region for dimension minecraft:overworld
+[11:53:45] [Server thread/INFO]: Time elapsed: 78 ms
+[11:53:45] [Server thread/INFO]: Preparing start region for dimension minecraft:the_nether
+[11:53:45] [Server thread/INFO]: Time elapsed: 10 ms
+[11:53:45] [Server thread/INFO]: Preparing start region for dimension minecraft:the_end
+[11:53:45] [Server thread/INFO]: Time elapsed: 8 ms
+[11:53:45] [Server thread/INFO]: [ViaVersion] Enabling ViaVersion v5.12.0
+[11:53:45] [Server thread/INFO]: [ViaVersion] ViaVersion detected server version: 1.20-1.20.1 (763)
+[11:53:45] [Server thread/INFO]: [spark] Enabling spark v1.10.191
+[11:53:46] [Server thread/INFO]: [spark] Using Paper ServerTickStartEvent for tick monitoring
+[11:53:46] [Server thread/INFO]: [spark] Starting background profiler...
+[11:53:46] [Server thread/INFO]: [ViaBackwards] Enabling ViaBackwards v5.12.0
+[11:53:46] [Server thread/INFO]: [JarvisDebug] Enabling JarvisDebug v0.1.0
+[11:53:46] [Server thread/INFO]: [JarvisDebug] Read-only inventory inspection enabled for AI_Agent
+[11:53:46] [Server thread/INFO]: Running delayed init tasks
+[11:53:46] [Server thread/INFO]: Done (2.764s)! For help, type "help"
+[11:53:46] [Craft Scheduler Thread - 2 - ViaVersion/INFO]: [ViaVersion] Finished mapping loading, shutting down loader executor.
+[11:53:48] [User Authenticator #0/INFO]: UUID of player AI_Agent is 164110f0-1d6f-3f5d-92d1-eceb1c848e7e
+[11:53:48] [Server thread/INFO]: AI_Agent joined the game
+[11:53:48] [Server thread/INFO]: AI_Agent[/127.0.0.1:57656] logged in with entity id 235 at ([world]14.37738818722411, 78.0, 1.4485513140026391)
+[11:53:54] [User Authenticator #0/INFO]: UUID of player Pilot6117 is c1e12106-86e0-3afb-b973-727ad6bdb625
+[11:53:54] [Server thread/INFO]: Pilot6117 joined the game
+[11:53:54] [Server thread/INFO]: Pilot6117[/127.0.0.1:57682] logged in with entity id 272 at ([world]15.939214647902075, 79.0, 2.7445682048468165)
+[11:53:59] [Async Chat Thread - #1/INFO]: [Not Secure] <Pilot6117> get 10 cobblestone and put it in the chest
+[11:53:59] [Async Chat Thread - #0/INFO]: [Not Secure] <AI_Agent> Starting verified task: mine_and_deposit.
+[11:54:01] [Async Chat Thread - #1/INFO]: [Not Secure] <AI_Agent> ❌ [DEPOSIT_NOT_VERIFIED] The chest/inventory counts did not confirm the requested transfer.
+[11:54:24] [Async Chat Thread - #1/INFO]: [Not Secure] <Pilot6117> I verified the Deposit thank you!
+[11:54:24] [Async Chat Thread - #0/INFO]: [Not Secure] <AI_Agent> I can collect logs/cobblestone, deliver items, and make a controlled staircase out. Farming/building aren't verified skills yet; I won't improvise unsafe actions.
+[11:55:05] [Async Chat Thread - #1/INFO]: [Not Secure] <Pilot6117> Can you get 10 blocks of oak wood logs and 10 dirt as well as 10 cobble stone and add it to the chest
+[11:55:05] [Async Chat Thread - #1/INFO]: [Not Secure] <AI_Agent> Starting verified task: mine_resource.
+[11:55:07] [Async Chat Thread - #0/INFO]: [Not Secure] <AI_Agent> ❌ [NO_SAFE_RESOURCE] No exposed stone/cobblestone has a safe walking route. I will not dig down or tunnel; help me reach an exposed face.
+[11:56:14] [Server thread/INFO]: Pilot6117 lost connection: Disconnected
+[11:56:14] [Server thread/INFO]: Pilot6117 left the game
+[11:56:18] [Server thread/INFO]: AI_Agent lost connection: Disconnected
+[11:56:18] [Server thread/INFO]: AI_Agent left the game
+[11:56:25] [Server thread/INFO]: Stopping the server
+[11:56:25] [Server thread/INFO]: Stopping server
+[11:56:25] [Server thread/INFO]: [JarvisDebug] Disabling JarvisDebug v0.1.0
+[11:56:25] [Server thread/INFO]: [ViaBackwards] Disabling ViaBackwards v5.12.0
+[11:56:25] [Server thread/INFO]: [spark] Disabling spark v1.10.191
+[11:56:25] [Server thread/INFO]: [ViaVersion] Disabling ViaVersion v5.12.0
+[11:56:25] [Server thread/INFO]: [ViaVersion] ViaVersion has been disabled; uninjected the platform and shut down the scheduler.
+[11:56:25] [Server thread/INFO]: Saving players
+[11:56:25] [Server thread/INFO]: Saving worlds
+[11:56:25] [Server thread/INFO]: Saving chunks for level 'ServerLevel[world]'/minecraft:overworld
+[11:56:25] [Server thread/INFO]: [ChunkHolderManager] Waiting 60s for chunk system to halt for world 'world'
+[11:56:25] [Server thread/INFO]: [ChunkHolderManager] Halted chunk system for world 'world'
+[11:56:25] [Server thread/INFO]: [ChunkHolderManager] Saving all chunkholders for world 'world'
+[11:56:26] [Server thread/INFO]: [ChunkHolderManager] Saved 650 block chunks, 650 entity chunks, 0 poi chunks in world 'world' in 0.55s
+[11:56:26] [Server thread/INFO]: ThreadedAnvilChunkStorage (world): All chunks are saved
+[11:56:26] [Server thread/INFO]: Saving chunks for level 'ServerLevel[world_nether]'/minecraft:the_nether
+[11:56:26] [Server thread/INFO]: [ChunkHolderManager] Waiting 60s for chunk system to halt for world 'world_nether'
+[11:56:26] [Server thread/INFO]: [ChunkHolderManager] Halted chunk system for world 'world_nether'
+[11:56:26] [Server thread/INFO]: [ChunkHolderManager] Saving all chunkholders for world 'world_nether'
+[11:56:26] [Server thread/INFO]: [ChunkHolderManager] Saved 529 block chunks, 529 entity chunks, 0 poi chunks in world 'world_nether' in 0.30s
+[11:56:26] [Server thread/INFO]: ThreadedAnvilChunkStorage (DIM-1): All chunks are saved
+[11:56:26] [Server thread/INFO]: Saving chunks for level 'ServerLevel[world_the_end]'/minecraft:the_end
+[11:56:26] [Server thread/INFO]: [ChunkHolderManager] Waiting 60s for chunk system to halt for world 'world_the_end'
+[11:56:26] [Server thread/INFO]: [ChunkHolderManager] Halted chunk system for world 'world_the_end'
+[11:56:26] [Server thread/INFO]: [ChunkHolderManager] Saving all chunkholders for world 'world_the_end'
+[11:56:26] [Server thread/INFO]: [ChunkHolderManager] Saved 529 block chunks, 529 entity chunks, 0 poi chunks in world 'world_the_end' in 0.04s
+[11:56:27] [Server thread/INFO]: ThreadedAnvilChunkStorage (DIM1): All chunks are saved
+[11:56:27] [Server thread/INFO]: ThreadedAnvilChunkStorage: All dimensions are saved
+[11:56:27] [Server thread/INFO]: Flushing Chunk IO
+[11:56:27] [Server thread/INFO]: Closing Thread Pool
+[11:56:27] [Server thread/INFO]: Closing Server

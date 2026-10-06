@@ -23,3 +23,9 @@ scratch/
 
 # Private per-world checkpoints, task history, graph and local locks
 data/
+
+# Local builds / generated configuration for our inventory debugger
+server-plugins/jarvis-debug/build/
+server/plugins/JarvisDebug.jar
+server/plugins/JarvisDebug/
+server-plugins/practice-oracle/build/

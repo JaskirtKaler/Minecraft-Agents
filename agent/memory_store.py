@@ -561,7 +561,7 @@ class WorldMemoryStore:
         return "\n".join(lines)
 
     def pending(self, limit: int = 1) -> list[dict[str, Any]]:
-        """Return durable graph episodes awaiting acknowledgement, oldest first."""
+        """Return least-retried episodes first so one bad episode cannot starve progress."""
         item_limit = max(0, int(limit))
         if item_limit == 0:
             return []
@@ -572,7 +572,7 @@ class WorldMemoryStore:
                 SELECT id, kind, world_id, dimension, payload_json, observed_at
                 FROM outbox
                 WHERE status = 'pending'
-                ORDER BY rowid ASC
+                ORDER BY attempts ASC, rowid ASC
                 LIMIT ?
                 """,
                 (item_limit,),
@@ -1094,6 +1094,8 @@ class WorldMemoryStore:
             "observed_before",
             "observed_after",
             "observed_mined",
+            "target_count",
+            "collection_mode",
             "collected",
             "delivered",
             "remaining",
@@ -1105,6 +1107,20 @@ class WorldMemoryStore:
             "give",
             "mined",
             "handoff",
+            "deposit",
+            "chest_before",
+            "chest_after",
+            "chest_position",
+            "mined_positions",
+            "navigation",
+            "kind",
+            "steps",
+            "dug",
+            "route_failures",
+            "completed_steps",
+            "failed_step",
+            "total_steps",
+            "verification_source",
             "error_code",
         )
         return {

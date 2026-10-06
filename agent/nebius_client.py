@@ -35,7 +35,7 @@ class NebiusLLMClient:
             raise ValueError("NEBIUS_API_KEY is missing. Please add NEBIUS_API_KEY to your .env file.")
 
         try:
-            logger.info(f"Sending prompt to Nebius Token Factory model: {self.model}...")
+            logger.info(f"Sending planner request: {self.model} via {self.base_url}...")
             response = await self.client.chat.completions.create(
                 model=self.model,
                 messages=messages,

@@ -70,6 +70,11 @@ class MineflayerBridge:
             self._update_state(message.get("data", {}))
             logger.debug("Received background state update from bot.")
 
+        elif msg_type == "knowledge_response":
+            future = self.pending_requests.pop(msg_id, None)
+            if future and not future.done():
+                future.set_result(message.get("data", {}))
+
         elif msg_type == "state_response":
             self._update_state(message.get("data", {}))
             future = self.pending_requests.pop(msg_id, None)
@@ -113,6 +118,13 @@ class MineflayerBridge:
         """Runs an allowlisted, verified Mineflayer skill on the Node bot."""
         return await self._request({"type": "execute_task", "task": task}, timeout=timeout)
 
+    async def get_knowledge(self, subject: str) -> Dict[str, Any]:
+        return await self._request({"type": "get_knowledge", "subject": subject}, timeout=10)
+
+    async def cancel_task(self):
+        if self.active_client:
+            await self.active_client.send(json.dumps({"type": "cancel_task"}))
+
     async def _request(self, payload: Dict[str, Any], timeout: float) -> Dict[str, Any]:
         """Send one correlated request and always discard its future on timeout."""
         if not self.active_client:
@@ -126,6 +138,10 @@ class MineflayerBridge:
         try:
             await self.active_client.send(json.dumps(request))
             return await asyncio.wait_for(future, timeout=timeout)
+        except (asyncio.TimeoutError, asyncio.CancelledError):
+            if payload.get("type") in {"execute_task", "execute_code"}:
+                await self.cancel_task()
+            raise
         finally:
             self.pending_requests.pop(req_id, None)
 

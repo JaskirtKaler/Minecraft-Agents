@@ -43,5 +43,6 @@ class Config(BaseModel):
     # Execution Loop Settings
     max_retries: int = Field(default_factory=lambda: int(os.getenv("MAX_RETRIES", "3")))
     code_timeout_ms: int = Field(default_factory=lambda: int(os.getenv("CODE_TIMEOUT_MS", "30000")))
+    allow_experimental_code: bool = Field(default_factory=lambda: os.getenv("ALLOW_EXPERIMENTAL_CODE", "false").lower() == "true")
 
 config = Config()

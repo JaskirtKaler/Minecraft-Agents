@@ -24,10 +24,27 @@ class WorldMemory:
         self.last_error = ""
         self.worker = None
         self._wake = asyncio.Event()
+        self._paused = False
+        self._closed = False
 
     def start(self):
-        if self.graphiti:
+        if self.graphiti and not self._closed and not self._paused and (not self.worker or self.worker.done()):
             self.worker = asyncio.create_task(self._ingestion_loop(), name="graphiti-world-memory")
+
+    async def pause(self):
+        """Prioritize gameplay; exact observations still persist immediately."""
+        self._paused = True
+        if self.worker and not self.worker.done():
+            self.worker.cancel()
+            try:
+                await self.worker
+            except asyncio.CancelledError:
+                pass
+        self.worker = None
+
+    def resume(self):
+        self._paused = False
+        self.start()
 
     def observe(self, state: dict):
         if self.store.observe(state):
@@ -55,7 +72,7 @@ class WorldMemory:
         return context
 
     def status(self) -> dict:
-        return {**self.store.status(), "graphiti": "ready" if self.graph_ready else (
+        return {**self.store.status(), "graphiti": "paused for gameplay" if self._paused else "ready" if self.graph_ready else (
             "starting or retrying" if self.graphiti else "disabled"), "last_error": self.last_error,
             "directory": str(self.directory)}
 
@@ -89,6 +106,7 @@ class WorldMemory:
                 await asyncio.sleep(30)
 
     async def close(self):
+        self._closed = True
         if self.worker:
             self.worker.cancel()
             try:

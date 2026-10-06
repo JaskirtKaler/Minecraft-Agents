@@ -16,11 +16,36 @@ class ResourceTaskIntentTests(unittest.TestCase):
         self.assertEqual(task["name"], "mine_logs")
         self.assertEqual(task["args"]["item"], "oak_log")
         self.assertEqual(task["args"]["count"], 10)
+        self.assertEqual(task["args"]["collection_mode"], "ensure_inventory")
+
+    def test_get_uses_carried_items_but_mine_requires_new_collection(self):
+        task = parse_resource_task("get 10 cobble stone and drop it in the chest", "Pilot6117")
+        self.assertEqual(task["name"], "mine_and_deposit")
+        self.assertEqual(task["args"]["collection_mode"], "ensure_inventory")
+        for verb in ["mine", "collect", "gather", "harvest"]:
+            task = parse_resource_task(f"{verb} 10 cobblestone and put it in the chest", "Pilot6117")
+            self.assertNotIn("collection_mode", task["args"])
+        task = parse_resource_task("get 10 cobblestone by mining it and put it in the chest", "Pilot6117")
+        self.assertNotIn("collection_mode", task["args"])
 
     def test_delivery_to_named_player(self):
         task = parse_resource_task("give 3 spruce logs to Alex")
         self.assertEqual(task["name"], "give_item")
         self.assertEqual(task["args"]["recipient"], "Alex")
+
+    def test_polite_infinitive_is_not_the_recipient(self):
+        task = parse_resource_task("are you able to get my 10 cobble stone and drop it to me", "Pilot6117")
+        self.assertEqual(task["args"]["recipient"], "Pilot6117")
+        self.assertIsNone(parse_resource_task("are you able to get 3 logs and drop them", "Pilot6117"))
+        task = parse_resource_task("I'd like you to get 3 logs and give them to Alex", "Pilot6117")
+        self.assertEqual(task["args"]["recipient"], "Alex")
+
+    def test_explicit_controlled_escape(self):
+        self.assertEqual(parse_resource_task("mine a staircase up 4 blocks"), {
+            "name": "escape_staircase", "args": {"rise": 4},
+        })
+        self.assertEqual(parse_resource_task("get yourself out of the hole")["name"], "escape_staircase")
+        self.assertIsNone(parse_resource_task("mine a staircase up 20 blocks"))
 
     def test_complex_task_is_not_partially_executed(self):
         task = parse_resource_task("get 10 oak logs then craft a chest")

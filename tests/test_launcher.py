@@ -167,6 +167,11 @@ class LauncherIntegrationTests(unittest.TestCase):
                 exit 0
             fi
 
+            case " $* " in
+                *" -Djarvis.bot.username=FixtureBot "*) ;;
+                *) printf '%s\n' 'missing inventory-plugin bot identity' >&2; exit 65 ;;
+            esac
+
             event server-start
             if [ "${FAKE_SERVER_MODE:-ready}" = "exit" ]; then
                 printf '%s\n' 'simulated server failure' >&2
@@ -321,6 +326,33 @@ class LauncherIntegrationTests(unittest.TestCase):
         self.assertIn("Minecraft port 25566 is already occupied", text)
         self.assertEqual(self._events(), [])
         self.assertFalse((self.root / "data" / "run" / "start.lock").exists())
+
+    def _add_fake_inventory_builder(self):
+        builder = self.root / "server-plugins" / "jarvis-debug" / "build.sh"
+        builder.parent.mkdir(parents=True)
+        self._write_executable(builder, r'''
+            #!/bin/sh
+            set -eu
+            [ "$MINECRAFT_JAVA" = "$FAKE_JAVA_EXPECTED" ]
+            printf '%s\n' 'inventory-build' >> "$FAKE_STATE_DIR/events.log"
+            ''')
+
+    def test_inventory_plugin_builds_before_server_with_selected_java(self):
+        self._add_fake_inventory_builder()
+        process, output = self._launch(FAKE_JAVA_EXPECTED=str(self.java))
+        self._wait_for_text(process, output, "READY — join Minecraft Java")
+        self.assertEqual(self._events()[:4], ["inventory-build", "server-start", "controller-start", "bot-start"])
+        process.send_signal(signal.SIGTERM)
+        code, _ = self._wait_for_exit(process, output)
+        self.assertEqual(code, 143)
+
+    def test_check_does_not_build_inventory_plugin_or_launch_services(self):
+        self._add_fake_inventory_builder()
+        process, output = self._launch("--check", FAKE_JAVA_EXPECTED=str(self.java))
+        code, text = self._wait_for_exit(process, output)
+        self.assertEqual(code, 0, text)
+        self.assertEqual(self._events(), [])
+        self.assertFalse((self.root / "data").exists())
 
 
 if __name__ == "__main__":

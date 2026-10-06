@@ -22,6 +22,8 @@ const {
 } = require('./state');
 const { executeCodeSnippet } = require('./sandbox');
 const { executeTask } = require('./skills');
+const { cancelOperation } = require('./operations');
+const { describeSubject } = require('./knowledge');
 
 // Configuration from environment or defaults
 const HOST = process.env.MC_HOST || 'localhost';
@@ -177,6 +179,14 @@ bot.on('spawn', () => {
 
     mcData = minecraftData(bot.version);
     const defaultMovements = new Movements(bot, mcData);
+    defaultMovements.canDig = false;
+    defaultMovements.allow1by1towers = false;
+    defaultMovements.scafoldingBlocks = []; // Walking must not silently place bridges.
+    defaultMovements.allowParkour = false;
+    defaultMovements.maxDropDown = 1;
+    for (const name of ['water', 'lava', 'magma_block', 'cactus', 'campfire']) {
+        if (mcData.blocksByName[name]) defaultMovements.blocksToAvoid.add(mcData.blocksByName[name].id);
+    }
     bot.pathfinder.setMovements(defaultMovements);
 
     if (ENABLE_VIEWER && !viewerStarted) {
@@ -242,6 +252,7 @@ bot.on('error', (err) => {
 });
 
 bot.on('death', () => {
+    cancelOperation(bot);
     console.warn(`[Mineflayer] Bot died in game. Automatically respawning...`);
     botSpawned = false;
     clearStateUpdateTimer();
@@ -265,6 +276,7 @@ bot.on('death', () => {
 });
 
 bot.on('end', (reason) => {
+    cancelOperation(bot);
     console.warn(`[Mineflayer] Bot connection ended: ${reason || 'unknown reason'}`);
     botSpawned = false;
     botEnded = true;
@@ -308,6 +320,7 @@ function connectToOrchestrator() {
 
     client.on('close', () => {
         if (wsClient !== client) return;
+        cancelOperation(bot);
         console.warn(`[WebSocket Bridge] Connection lost to Orchestrator. Will retry in 5s...`);
         wsClient = null;
         clearStateUpdateTimer();
@@ -340,6 +353,12 @@ async function handleOrchestratorMessage(message) {
     const { type, id, code, text, task, timeoutMs } = message;
 
     switch (type) {
+        case 'cancel_task':
+            cancelOperation(bot);
+            break;
+        case 'get_knowledge':
+            sendToOrchestrator({ type: 'knowledge_response', id, data: describeSubject(bot, message.subject) });
+            break;
         case 'get_state':
             sendToOrchestrator({
                 type: 'state_response',
@@ -349,6 +368,13 @@ async function handleOrchestratorMessage(message) {
             break;
 
         case 'execute_code':
+            if (process.env.ALLOW_EXPERIMENTAL_CODE !== 'true') {
+                sendToOrchestrator({ type: 'execution_result', id, result: {
+                    success: false, verified: false, status: 'failed',
+                    errorStack: 'Generated JavaScript is disabled. Use verified resource skills.'
+                } });
+                break;
+            }
             console.log(`[Execution Sandbox] Executing request ID: ${id || 'unnamed'}`);
             console.log(`--- CODE --- \n${code}\n------------`);
             
@@ -371,9 +397,18 @@ async function handleOrchestratorMessage(message) {
             break;
 
         case 'execute_task': {
+            if (!isBotSpawned()) {
+                sendToOrchestrator({ type: 'execution_result', id, result: {
+                    success: false, verified: false, message: 'The bot is not spawned; wait for it to rejoin.'
+                } });
+                break;
+            }
             console.log(`[Verified Task] Executing request ID: ${id || 'unnamed'} (${task?.name || 'unknown'})`);
             const startedAt = Date.now();
-            const taskResult = await executeTask(bot, task);
+            const taskResult = await executeTask(bot, task, { onProgress: phase => {
+                console.log('[Task Progress]', phase);
+                sendToOrchestrator({ type: 'event', event: 'task_progress', data: { id, phase } });
+            } });
             const result = { ...taskResult, durationMs: Date.now() - startedAt };
 
             console.log(`[Verified Task] Success: ${result.success} | Verified: ${result.verified} | Duration: ${result.durationMs}ms`);

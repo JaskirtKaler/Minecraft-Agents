@@ -6,6 +6,7 @@
 const { Vec3 } = require('vec3');
 const pathfinder = require('mineflayer-pathfinder');
 const minecraftData = require('minecraft-data');
+const { runOperation } = require('./operations');
 
 /**
  * Extracts pure JavaScript code from LLM responses (stripping markdown & reasoning).
@@ -66,14 +67,8 @@ async function executeCodeSnippet(code, bot, timeoutMs = 30000) {
     const goals = pathfinder.goals;
     const cleanCode = extractExecutableCode(code);
 
-    let timeoutId;
-    const timeoutPromise = new Promise((_, reject) => {
-        timeoutId = setTimeout(() => {
-            reject(new Error(`Code execution timed out after ${timeoutMs / 1000} seconds.`));
-        }, timeoutMs);
-    });
-
-    const executionPromise = (async () => {
+    try {
+      await runOperation(bot, async guardedBot => {
         const AsyncFunction = Object.getPrototypeOf(async function () { }).constructor;
         const runner = new AsyncFunction(
             'bot',
@@ -85,12 +80,8 @@ async function executeCodeSnippet(code, bot, timeoutMs = 30000) {
             `"use strict";\n${cleanCode}`
         );
 
-        return await runner(bot, Vec3, pathfinder, goals, mcData, customConsole);
-    })();
-
-    try {
-        await Promise.race([executionPromise, timeoutPromise]);
-        clearTimeout(timeoutId);
+        return await runner(guardedBot, Vec3, guardedBot.pathfinder, goals, mcData, customConsole);
+      }, { timeoutMs });
 
         return {
             success: true,
@@ -100,8 +91,6 @@ async function executeCodeSnippet(code, bot, timeoutMs = 30000) {
             durationMs: Date.now() - startTime
         };
     } catch (err) {
-        clearTimeout(timeoutId);
-        
         // Stop any pathfinder movement if error occurred
         if (bot.pathfinder) {
             try { bot.pathfinder.setGoal(null); } catch (e) {}
@@ -112,6 +101,7 @@ async function executeCodeSnippet(code, bot, timeoutMs = 30000) {
 
         return {
             success: false,
+            status: ['TASK_TIMEOUT', 'CANCELLED'].includes(err.code) ? 'unknown' : 'failed',
             stdout: stdoutLines.join('\n'),
             stderr: stderrLines.join('\n'),
             errorStack: stackTrace,
