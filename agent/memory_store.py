@@ -1121,6 +1121,11 @@ class WorldMemoryStore:
             "failed_step",
             "total_steps",
             "verification_source",
+            "goals",
+            "goal_evidence",
+            "model_steps",
+            "lesson",
+            "experience_id",
             "error_code",
         )
         return {

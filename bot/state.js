@@ -232,7 +232,7 @@ function getBotState(bot, options = {}) {
             source: 'minecraft-data for ' + bot.version,
             cobblestone: 'Mine exposed stone/cobblestone with a harvest-capable pickaxe without Silk Touch; verify pickup.',
             navigation: 'Walking cannot dig. Bounded controlled uphill staircase escape may clear terrain; no towers or mining underfoot.',
-            wheat: 'Crop age must be checked before harvest; farming execution is not a supported skill yet.'
+            wheat: 'Inspect crop age before harvest. Explicit dig/place/use_on_block tools can be composed for farming; verify results.'
         },
         nearbyEntities: topEntities,
         nearbyKeyBlocks: nearbyBlocksSummary,

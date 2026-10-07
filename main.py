@@ -9,6 +9,7 @@ import json
 import logging
 import signal
 import sys
+from time import perf_counter
 from agent.config import config
 from agent.bridge import MineflayerBridge
 from agent.graph import MinecraftAgentGraph
@@ -25,6 +26,25 @@ logger = logging.getLogger("MainController")
 async def run_agent_loop(bridge: MineflayerBridge, memory=None, chat_only=False):
     """Interactive loop for CLI objectives and automated in-game Minecraft chat trigger."""
     agent_graph = MinecraftAgentGraph(bridge, memory=memory)
+    try:
+        await _run_agent_loop(agent_graph, bridge, memory, chat_only)
+    finally:
+        active = getattr(agent_graph, 'dialogue', {}).get('active_task')
+        if active and active is not asyncio.current_task() and not active.done():
+            active.cancel()
+            try:
+                await active
+            except asyncio.CancelledError:
+                pass
+            except Exception:
+                logger.exception('Active objective failed during shutdown')
+        if getattr(agent_graph, 'tool_agent', None):
+            await agent_graph.tool_agent.aclose()
+        if getattr(agent_graph, 'nebius', None):
+            await agent_graph.nebius.client.close()
+
+
+async def _run_agent_loop(agent_graph, bridge, memory, chat_only):
     agent_graph.dialogue = {"pending": {}, "active": None, "last": {}, "phase": ""}
     objective_lock = asyncio.Lock()
 
@@ -107,6 +127,27 @@ async def execute_cli_objective(
     if objective.lower().strip() == 'inventory':
         print('\n'.join(inventory_reply(await bridge.get_state())))
         return
+    if getattr(agent_graph, 'tool_agent', None) and objective.lower().strip() not in {'memory', 'memory status'}:
+        if objective_lock.locked():
+            print('Another objective is active. Use Minecraft chat status/stop, then retry.')
+            return
+        async with objective_lock:
+            if not hasattr(agent_graph, 'dialogue'):
+                agent_graph.dialogue = {'pending': {}, 'active': None, 'last': {}, 'phase': ''}
+            dialogue = agent_graph.dialogue
+            job = asyncio.create_task(execute_model_objective(agent_graph, bridge, objective))
+            dialogue.update(active=objective, active_task=job, stop_requested=False)
+            try:
+                result = await job
+                dialogue['last']['terminal'] = result
+                print(json.dumps(result, indent=2))
+            except asyncio.CancelledError:
+                if not dialogue.get('stop_requested'):
+                    raise
+                print('Stopped; partial progress is not a completed task.')
+            finally:
+                dialogue.update(active=None, active_task=None)
+        return
     async with objective_lock:
         if objective.lower() in {"memory", "memory status"}:
             if not agent_graph.memory:
@@ -162,6 +203,10 @@ async def execute_chat_objective(
         if route["kind"] == "cancel":
             dialogue["pending"].pop(username, None)
             await bridge.cancel_task()
+            active = dialogue.get('active_task')
+            if active and active is not asyncio.current_task():
+                dialogue['stop_requested'] = True
+                active.cancel()
             await bridge.send_chat("Stop requested. Any partial collection/deposit is not a completed task.")
             return
         if route["kind"] == "status":
@@ -182,6 +227,35 @@ async def execute_chat_objective(
                     await asyncio.sleep(0.6)
                 await bridge.send_chat(line)
             return
+        model_agent = getattr(agent_graph, 'tool_agent', None)
+        if model_agent and route['kind'] != 'memory':
+            if objective_lock.locked():
+                await bridge.send_chat("I'm working. Ask 'status' or 'stop'; resend the next objective when finished.")
+                return
+            async with objective_lock:
+                dialogue['active'] = message
+                dialogue['active_task'] = asyncio.current_task()
+                dialogue['stop_requested'] = False
+                try:
+                    await bridge.send_chat("Thinking through your request with the model.")
+                    result = await execute_model_objective(agent_graph, bridge, message, username)
+                    dialogue['last'][username] = result
+                    if result.get('status') == 'answer':
+                        reply = result.get('message', '')
+                    else:
+                        reply = ('Confirmed: ' if result.get('verified') else 'Not completed: ') + result.get('message', '')
+                    for index, offset in enumerate(range(0, min(len(reply), 660), 220)):
+                        if index:
+                            await asyncio.sleep(0.6)
+                        await bridge.send_chat(reply[offset:offset + 220])
+                except asyncio.CancelledError:
+                    if not dialogue.get('stop_requested'):
+                        raise
+                    dialogue['last'][username] = {'success': False, 'verified': False, 'status': 'unknown', 'message': 'Stopped by requester.'}
+                finally:
+                    dialogue['active'] = None
+                    dialogue['active_task'] = None
+                return
         if route["kind"] == "knowledge":
             facts = await bridge.get_knowledge(route["subject"])
             reply = knowledge_reply(facts)
@@ -260,6 +334,40 @@ async def execute_recorded_task(agent_graph, bridge, objective, task, requester=
         if paused:
             memory.resume()
     save_task_outcome(agent_graph, objective, task, result, bridge.latest_state or state, requester)
+    return result
+
+
+async def execute_model_objective(agent_graph, bridge, objective, requester=None):
+    """Record model-selected actions without falling back to task regex plans."""
+    notifications = set()
+    last_notice = 0
+    def notice_done(notification):
+        notifications.discard(notification)
+        if not notification.cancelled() and notification.exception():
+            logger.warning('Could not send inference-wait update: %s', notification.exception())
+    def progress(phase):
+        nonlocal last_notice
+        if hasattr(agent_graph, 'dialogue'):
+            agent_graph.dialogue['phase'] = phase
+        logger.info('Model progress: %s', phase)
+        if requester and phase.startswith('waiting for') and perf_counter() - last_notice >= 30:
+            last_notice = perf_counter()
+            notification = asyncio.create_task(bridge.send_chat(phase[:220]))
+            notifications.add(notification)
+            notification.add_done_callback(notice_done)
+    try:
+        result = await agent_graph.tool_agent.run(objective, requester, progress)
+    except BaseException as error:
+        result = {'success': False, 'verified': False, 'status': 'unknown', 'message': f'Interrupted: {type(error).__name__}'}
+        save_task_outcome(agent_graph, objective, {'name': 'model_tool_loop'}, result, bridge.latest_state, requester)
+        raise
+    finally:
+        for notification in notifications:
+            notification.cancel()
+        if notifications:
+            await asyncio.gather(*notifications, return_exceptions=True)
+    if result.get('status') != 'answer':
+        save_task_outcome(agent_graph, objective, {'name': 'model_tool_loop'}, result, bridge.latest_state, requester)
     return result
 
 

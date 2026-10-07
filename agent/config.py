@@ -4,6 +4,7 @@ Loads configuration from environment variables (.env file).
 """
 
 import os
+from typing import Literal
 from pydantic import BaseModel, Field
 from dotenv import load_dotenv
 
@@ -44,5 +45,16 @@ class Config(BaseModel):
     max_retries: int = Field(default_factory=lambda: int(os.getenv("MAX_RETRIES", "3")))
     code_timeout_ms: int = Field(default_factory=lambda: int(os.getenv("CODE_TIMEOUT_MS", "30000")))
     allow_experimental_code: bool = Field(default_factory=lambda: os.getenv("ALLOW_EXPERIMENTAL_CODE", "false").lower() == "true")
+    task_planner: Literal['model', 'baseline'] = Field(default_factory=lambda: os.getenv("TASK_PLANNER", "model"), validate_default=True)
+    model_step_timeout: float = Field(default_factory=lambda: float(os.getenv("MODEL_STEP_TIMEOUT", "120")), gt=0, le=600, validate_default=True)
+    agent_max_steps: int = Field(default_factory=lambda: int(os.getenv("AGENT_MAX_STEPS", "20")), ge=1, le=100, validate_default=True)
+    agent_timeout: float = Field(default_factory=lambda: float(os.getenv("AGENT_TIMEOUT", "600")), gt=0, le=3600, validate_default=True)
+    planner_max_tokens: int = Field(default_factory=lambda: int(os.getenv('PLANNER_MAX_TOKENS', '1536')), ge=256, le=16384, validate_default=True)
+    agent_batch_size: int = Field(default_factory=lambda: int(os.getenv('AGENT_BATCH_SIZE', '4')), ge=1, le=8, validate_default=True)
+    agent_max_plan_errors: int = Field(default_factory=lambda: int(os.getenv('AGENT_MAX_PLAN_ERRORS', '3')), ge=1, le=10, validate_default=True)
+    agent_reflection_delay: float = Field(default_factory=lambda: float(os.getenv('AGENT_REFLECTION_DELAY', '10')), ge=0, le=300, validate_default=True)
+    learning_dir: str = Field(default_factory=lambda: os.getenv("LEARNING_DIR", "data/learning"))
+    local_planner_thinking: bool = Field(default_factory=lambda: os.getenv('LOCAL_PLANNER_THINKING', 'false').lower() == 'true')
+    mc_training_mode: bool = Field(default_factory=lambda: os.getenv('MC_TRAINING_MODE', 'true').lower() == 'true')
 
 config = Config()

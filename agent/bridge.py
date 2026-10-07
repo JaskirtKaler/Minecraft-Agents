@@ -121,6 +121,9 @@ class MineflayerBridge:
     async def get_knowledge(self, subject: str) -> Dict[str, Any]:
         return await self._request({"type": "get_knowledge", "subject": subject}, timeout=10)
 
+    async def execute_tool(self, tool: Dict[str, Any], timeout: float = 80.0) -> Dict[str, Any]:
+        return await self._request({"type": "execute_tool", "tool": tool}, timeout=timeout)
+
     async def cancel_task(self):
         if self.active_client:
             await self.active_client.send(json.dumps({"type": "cancel_task"}))
@@ -139,7 +142,7 @@ class MineflayerBridge:
             await self.active_client.send(json.dumps(request))
             return await asyncio.wait_for(future, timeout=timeout)
         except (asyncio.TimeoutError, asyncio.CancelledError):
-            if payload.get("type") in {"execute_task", "execute_code"}:
+            if payload.get("type") in {"execute_task", "execute_code", "execute_tool"}:
                 await self.cancel_task()
             raise
         finally:

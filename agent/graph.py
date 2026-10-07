@@ -14,6 +14,7 @@ from agent.tavily_client import TavilySearchClient
 from agent.jarvis_client import JarvisClient
 from agent.prompts import SYSTEM_PROMPT, REWRITE_PROMPT_TEMPLATE
 from agent.config import config
+from agent.tool_agent import ModelToolAgent
 
 logger = logging.getLogger("AgentGraph")
 
@@ -36,6 +37,7 @@ class MinecraftAgentGraph:
         self.tavily = TavilySearchClient()
         self.jarvis = JarvisClient()
         self.graph = self._build_graph()
+        self.tool_agent = ModelToolAgent(bridge, self.nebius, memory) if config.task_planner == 'model' else None
 
     def _build_graph(self):
         builder = StateGraph(AgentState)

@@ -1,6 +1,6 @@
-"""Headless baseline: real Purpur + real Mineflayer + the normal chat router.
+"""Headless practice: real Purpur + Mineflayer, baseline or model-led learning.
 
-No model inference, no Minecraft client, no access to the normal world/memory.
+Baseline has no inference; --learn makes model calls. No normal world/memory access.
 Every generated world and log is retained under data/practice for inspection.
 """
 import argparse
@@ -16,6 +16,7 @@ import socket
 import subprocess
 from types import SimpleNamespace
 import uuid
+import base64
 
 from agent.bridge import MineflayerBridge
 from agent.config import Config
@@ -77,11 +78,13 @@ class ServerConsole:
             if not future.done():
                 future.set_exception(RuntimeError("Practice server exited"))
 
-    async def request(self, action, scenario=None):
+    async def request(self, action, scenario=None, goals=None):
         token = str(uuid.uuid4())
         future = asyncio.get_running_loop().create_future()
         self.pending[token] = future
         command = f"practiceoracle {action} {token} {BOT_NAME}" + (f" {scenario}" if scenario else "")
+        if goals is not None:
+            command += ' ' + base64.urlsafe_b64encode(json.dumps(goals).encode()).decode()
         self.process.stdin.write((command + "\n").encode())
         await self.process.stdin.drain()
         try:
@@ -136,6 +139,9 @@ async def run(args, selected):
     loop = asyncio.get_running_loop()
     owner = asyncio.current_task()
     loop.add_signal_handler(signal.SIGTERM, owner.cancel)
+    if args.learn:
+        from practice.learning import check_backend
+        check_backend(Config(), args.allow_hosted)
     java = java_binary()
     subprocess.run(["bash", str(ROOT / "server-plugins/practice-oracle/build.sh")], check=True,
                    env={**os.environ, "MINECRAFT_JAVA": java})
@@ -145,7 +151,7 @@ async def run(args, selected):
     port = free_port()
     prepare_server(directory / "server", nonce, port)
     print(f"Practice artifacts: {directory}", flush=True)
-    print("Real server + bot, no Minecraft client or model inference; normal world/memory untouched.", flush=True)
+    print("Real server + bot; " + ("MODEL INFERENCE ENABLED" if args.learn else "no model inference") + "; normal world/memory untouched.", flush=True)
     settings = Config(memory_enabled=True, graphiti_enabled=False, memory_dir=str(directory / "memory"))
     memory = WorldMemory(settings)
     bridge = MineflayerBridge(host="127.0.0.1", port=0)
@@ -165,7 +171,9 @@ async def run(args, selected):
     try:
         server_log = (directory / "server.log").open("w")
         streams.append(server_log)
-        server = await asyncio.create_subprocess_exec(java, "-Xms512M", "-Xmx1G", f"-Dminecraftagents.practice={nonce}",
+        seed = args.seed if args.seed is not None else int(nonce[:8], 16)
+        report['seed'] = seed
+        server = await asyncio.create_subprocess_exec(java, "-Xms512M", "-Xmx1G", f"-Dminecraftagents.practice={nonce}", f"-Dminecraftagents.practice.seed={seed}",
             "-jar", "server.jar", "--nogui", cwd=directory / "server",
             stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT)
         console = ServerConsole(server, server_log)
@@ -187,6 +195,9 @@ async def run(args, selected):
         else:
             raise RuntimeError("Practice bot did not become ready")
         lock = asyncio.Lock()
+        if args.learn:
+            from practice.learning import learning_loop
+            await learning_loop(args, console, bridge, agent, settings, directory, report, lock)
         for repetition in range(args.repeat):
             for scenario in selected:
                 await console.request("setup", scenario.name)
@@ -243,6 +254,11 @@ def main():
     parser.add_argument("--cases", help="Comma-separated cases; default: all basic cases. Optional: staircase")
     parser.add_argument("--repeat", type=int, default=1)
     parser.add_argument("--timeout", type=float, default=90, help="Seconds per case; no automatic transfer retries")
+    parser.add_argument('--learn', action='store_true', help='Model chooses curriculum/actions in varied setups; makes inference calls')
+    parser.add_argument('--episodes', type=int, default=3, help='Learning episodes (1–20)')
+    parser.add_argument('--objective', help='Optional learning objective; otherwise the model chooses each objective')
+    parser.add_argument('--seed', type=int, help='Reproducible learning environment seed; default random per run')
+    parser.add_argument('--allow-hosted', action='store_true', help='Explicitly permit configured non-local inference and costs in learning mode')
     args = parser.parse_args()
     catalog = {case.name: case for case in SCENARIOS + OPTIONAL_SCENARIOS}
     if args.list:
@@ -251,11 +267,13 @@ def main():
         return 0
     if not 1 <= args.repeat <= 10 or not 5 <= args.timeout <= 180:
         parser.error("repeat must be 1–10; timeout must be 5–180 seconds")
+    if not 1 <= args.episodes <= 20 or (args.learn and args.cases):
+        parser.error('episodes must be 1–20; --learn cannot be combined with fixed --cases')
     names = args.cases.split(",") if args.cases else [case.name for case in SCENARIOS]
     if any(name not in catalog for name in names):
         parser.error("Unknown case; use --list")
     try:
-        return asyncio.run(run(args, [catalog[name] for name in names]))
+        return asyncio.run(run(args, [] if args.learn else [catalog[name] for name in names]))
     except KeyboardInterrupt:
         return 130
     except asyncio.CancelledError:

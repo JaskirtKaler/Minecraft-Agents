@@ -26,6 +26,24 @@ function stopMotion (bot) {
   try { bot.clearControlStates?.(); } catch (_) {}
 }
 
+async function pacedCraft (bot, craft, args, lease) {
+  // Modern clicks carry a server stateId. The stock crafting implementation
+  // can finish optimistic output/placement clicks before the server's next
+  // inventory update, leading to resyncs rather than an actual crafted item.
+  // Pace only this already-serialized primitive; never retry a craft here.
+  const original = bot.clickWindow;
+  const paced = async (...clickArgs) => {
+    lease.check();
+    const result = await original.apply(bot, clickArgs);
+    await bot.waitForTicks(1);
+    lease.check();
+    return result;
+  };
+  bot.clickWindow = paced;
+  try { return await craft.apply(bot, args); }
+  finally { if (bot.clickWindow === paced) bot.clickWindow = original; }
+}
+
 async function runOperation (bot, work, { timeoutMs = 180000 } = {}) {
   if (running.has(bot)) throw operationError('BUSY', 'A previous operation is still settling; please wait.');
   const lease = { active: true, windows: new Set(), reason: null };
@@ -71,15 +89,17 @@ async function runOperation (bot, work, { timeoutMs = 180000 } = {}) {
           args[0].allow1by1towers = false;
           args[0].scafoldingBlocks = [];
         }
-        const result = value.apply(target, args);
+        const result = kind === 'bot' && key === 'craft' && bot.clickWindow && bot.waitForTicks &&
+          bot.supportFeature?.('stateIdUsed')
+          ? pacedCraft(bot, value, args, lease) : value.apply(target, args);
         if (!result || typeof result.then !== 'function') return result;
         return result.then(returned => {
-          if (kind === 'bot' && ['openChest', 'openContainer'].includes(key) && returned) {
+          if (kind === 'bot' && ['openChest', 'openContainer', 'openBlock'].includes(key) && returned) {
             if (!lease.active) { try { returned.close(); } catch (_) {} }
             else lease.windows.add(returned);
           }
           lease.check();
-          return kind === 'bot' && ['openChest', 'openContainer'].includes(key)
+          return kind === 'bot' && ['openChest', 'openContainer', 'openBlock'].includes(key)
             ? facade(returned, 'window') : returned;
         });
       };

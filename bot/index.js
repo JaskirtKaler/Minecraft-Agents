@@ -22,6 +22,7 @@ const {
 } = require('./state');
 const { executeCodeSnippet } = require('./sandbox');
 const { executeTask } = require('./skills');
+const { executeTool } = require('./tools');
 const { cancelOperation } = require('./operations');
 const { describeSubject } = require('./knowledge');
 
@@ -353,6 +354,19 @@ async function handleOrchestratorMessage(message) {
     const { type, id, code, text, task, timeoutMs } = message;
 
     switch (type) {
+        case 'execute_tool': {
+            if (!isBotSpawned()) {
+                sendToOrchestrator({ type: 'execution_result', id, result: {
+                    success: false, verified: false, message: 'Bot is not spawned.'
+                } });
+                break;
+            }
+            const result = await executeTool(bot, message.tool, { onProgress: phase => {
+                sendToOrchestrator({ type: 'event', event: 'task_progress', data: { id, phase } });
+            } });
+            sendToOrchestrator({ type: 'execution_result', id, result, currentState: getBotState(bot) });
+            break;
+        }
         case 'cancel_task':
             cancelOperation(bot);
             break;

@@ -4,6 +4,7 @@ const { executeTask } = require('../bot/skills');
 const { runStateTests } = require('./test_state');
 const { runResourceTests } = require('./test_resources');
 const { runNavigationTests } = require('./test_navigation');
+const { runToolTests } = require('./test_tools');
 
 function position (x, y, z) {
   return { x, y, z };
@@ -237,6 +238,7 @@ async function run () {
   await runStateTests();
   await runResourceTests();
   await runNavigationTests();
+  await runToolTests();
   console.log('✓ deterministic skills tests passed');
 }
 

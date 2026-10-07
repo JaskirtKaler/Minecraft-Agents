@@ -23,14 +23,17 @@ mkdir -p "$BUILD_DIR/classes"
 SOURCES=(
     "$PLUGIN_DIR/src/main/java/dev/minecraftagents/debug/InventoryLayout.java"
     "$PLUGIN_DIR/src/main/java/dev/minecraftagents/debug/ReadOnlyInventoryListener.java"
+    "$PLUGIN_DIR/src/main/java/dev/minecraftagents/debug/TrainingModeListener.java"
     "$PLUGIN_DIR/src/main/java/dev/minecraftagents/debug/JarvisDebugPlugin.java"
 )
 "$JDK_BIN/javac" --release 17 -proc:none -encoding UTF-8 -classpath "$CLASSPATH" -d "$BUILD_DIR/classes" "${SOURCES[@]}"
 if [ "$MODE" = --test ]; then
     mkdir -p "$BUILD_DIR/test-classes"
     "$JDK_BIN/javac" --release 17 -proc:none -encoding UTF-8 -classpath "$BUILD_DIR/classes:$CLASSPATH" \
-        -d "$BUILD_DIR/test-classes" "$PLUGIN_DIR/src/test/java/dev/minecraftagents/debug/InventorySafetyTest.java"
+        -d "$BUILD_DIR/test-classes" "$PLUGIN_DIR/src/test/java/dev/minecraftagents/debug/InventorySafetyTest.java" \
+        "$PLUGIN_DIR/src/test/java/dev/minecraftagents/debug/TrainingModeTest.java"
     "$JAVA_BIN" -ea -classpath "$BUILD_DIR/test-classes:$BUILD_DIR/classes:$CLASSPATH" dev.minecraftagents.debug.InventorySafetyTest
+    "$JAVA_BIN" -ea -classpath "$BUILD_DIR/test-classes:$BUILD_DIR/classes:$CLASSPATH" dev.minecraftagents.debug.TrainingModeTest
 else
     "$JDK_BIN/jar" --create --file "$BUILD_DIR/JarvisDebug.jar" -C "$BUILD_DIR/classes" . -C "$PLUGIN_DIR/src/main/resources" .
     mkdir -p "$ROOT_DIR/server/plugins"

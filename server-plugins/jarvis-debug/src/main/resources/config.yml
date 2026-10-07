@@ -4,3 +4,6 @@ bot-username: AI_Agent
 allowed-viewers:
   - Pilot6117
 refresh-ticks: 10
+# Early development: no hostile-mob difficulty or hunger. Survival mechanics
+# stay enabled. Root start.sh can override with MC_TRAINING_MODE=false.
+training-mode: true

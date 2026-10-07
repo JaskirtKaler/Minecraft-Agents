@@ -13,15 +13,15 @@ This is an active prototype. The table distinguishes controlled real-server test
 | Give a named player an exact count of held items | End-to-end wired through `give_item`; mock/unit-tested, not yet live-server tested. It verifies the bot's inventory decreased after a toss near the player, **not** that the player picked the item up. |
 | Mine logs and give them to the chat requester | Demonstrated in the recorded local run. Verification proves toss near the player, not player pickup. |
 | Logs, dirt, and cobblestone collection / chest delivery | Headless Purpur + Mineflayer tests pass individual collection, held-item shortfalls, exact partial-stack/multiple-stack transfers, and a batch of 10 of each resource. Each transfer reopens the chest to verify fresh inventory and container deltas. Survival-world acceptance still matters. |
-| Stacked resource requests | Fully validated typed `execute_plan` steps; shared chest capacity and required pickaxe are checked before collection. No silent execution of only one part of an unsupported batch. |
+| Stacked resource requests | The model now decomposes the request and declares criteria for the whole objective. Typed `execute_plan` remains a tested regression baseline. General model-led batch acceptance is still needed. |
 | Controlled staircase escape | Typed `escape_staircase`; uphill chest/player approach can invoke it automatically when walking fails. A real-server fixture demonstrates a 3-block uphill escape without underfoot mining. Other terrain still needs testing. |
 | Read-only agent inventory | Chat `inventory` reads fresh bot state even during tasks. `/jarvisinventory` or right-clicking the bot opens a live server-side inventory window. Plugin compiled against the installed Purpur API with offline event-safety tests; live-client acceptance is pending. |
 | Block/tool/drop/recipe knowledge | Read-only lookup from the installed version-matched `minecraft-data` registry. Drop entries are conditional possibilities, not unconditional promises. |
-| Farming, crafting, placement, smelting, or multi-step builds | Not verified capabilities yet. Unsupported chat requests explain that limitation rather than execute generated code. Resource batches are supported, arbitrary builds are not. |
-| Repeatable practice curriculum | `./practice.sh` runs real server/bot fixtures with server-authoritative grading, separate worlds/memory, and no inference calls. It is an evaluation baseline, not fine-tuning or autonomous skill invention. |
+| Model-led crafting, placement, digging and interactions | Generic tools are available to chat and terminal planning. Recipes come from Minecraft's registry, not item-specific action scripts. The model decides dependencies and recovery; broad reliability is not established. Smelting lacks a furnace-control tool. |
+| Practice and experience-based learning | `./learn.sh` lets the model select objectives, act in varied isolated setups, reflect, and retrieve persistent lessons. It makes real inference calls. `./practice.sh` remains a fixed, zero-inference regression baseline. Neither updates model weights. |
 | Persistent environmental knowledge graph / long-term world memory | Local SQLite checkpoints + Graphiti temporal graph with embedded FalkorDB Lite. Rejoins recover prior progress; task outcomes and discoveries are ingested in the background. Live gameplay acceptance testing is still needed. |
 
-Chat distinguishes tasks, knowledge questions, corrections, status, and cancellation. Missing quantities prompt a follow-up (1–64), scoped to the requesting player. Physical operations are serialized and expired operations cannot issue new guarded actions. Already-issued server actions may still have partial effects, so interrupted outcomes remain unverified.
+Normal chat no longer rejects crafting/building/farming verbs before asking the model. Status, inventory, memory and cancellation retain direct control routes. Physical operations are serialized and expired operations cannot issue new guarded actions. Already-issued server actions may still have partial effects, so interrupted outcomes remain unverified.
 
 ## Architecture
 
@@ -30,15 +30,17 @@ Minecraft chat or terminal
         │
         ▼
 Python controller (main.py)
-  ├─ typed parser + validated resource plans + serialized task routing
+  ├─ model-led observe → choose tool → act → verify → replan loop
+  ├─ experience library (SQLite): outcomes, reusable lessons, retrieval
   ├─ exact world checkpoints / durable episode outbox (SQLite)
   ├─ Graphiti → embedded FalkorDB Lite → local Ollama extraction + embeddings
-  └─ LangGraph planner for explicitly opted-in CLI experiments (unverified)
+  └─ typed regression baseline + legacy opted-in JS experiments (unverified)
         │ WebSocket :8765
         ▼
 Node Mineflayer bot
   ├─ version-matched game knowledge (drops, tools, block properties, recipes)
   ├─ safe typed resource / handoff / chest-transfer skills + batch execution
+  ├─ generic recipe / craft / dig / place / interaction / container tools
   ├─ no-progress walking watchdog + bounded dropped-item recovery
   └─ revocable operation lifecycle; generated JS disabled by default
         │
@@ -46,7 +48,9 @@ Node Mineflayer bot
 Local Purpur Minecraft 1.20.1 server
 ```
 
-`agent/intents.py` recognizes bounded resource, resource-batch, and escape tasks. `bot/knowledge.js` looks up version-matched mechanics; `bot/resources.js` selects exposed targets and verifies chest transfers. `bot/navigation.js` separates ordinary walking from controlled uphill excavation. The legacy planner is retained for explicitly opted-in terminal experiments (`ALLOW_EXPERIMENTAL_CODE=true` in `.env`). It is not a security sandbox, generated snippets remain unverified, and game chat never falls back to arbitrary generated JavaScript.
+`agent/tool_agent.py` is the default planner (`TASK_PLANNER=model`). It uses fresh world state, registry tools, world memory and retrieved experience to choose actions. There is no wooden-sword-specific executor: `bot/tools.js` crafts any available registry recipe, while the model decides ingredients and stations. Model-declared criteria are frozen before physical actions; observations determine completion.
+
+`TASK_PLANNER=baseline` restores `agent/intents.py`'s resource parser. Resource/navigation skills remain optional convenience tools with conservative policies; the model can instead compose generic tools. Primitive implementation and verification are still programmed—removing the task allowlist does not make API contracts, tool ranges or cancellation optional. The legacy JS planner is only available in explicitly opted-in baseline CLI experiments (`ALLOW_EXPERIMENTAL_CODE=true`); game chat never executes arbitrary generated JavaScript.
 
 ## Prerequisites
 
@@ -75,6 +79,26 @@ Keep this terminal open. **Ctrl+C** stops the bot/controller and sends Minecraft
 The launcher binds Minecraft and the controller to localhost, preserves the existing memory world ID, and refuses to launch duplicate services on occupied ports. `./start.sh --check` validates configuration, dependencies, and port availability without starting services. For a different installation path, set `MINECRAFT_PYTHON` or `MINECRAFT_JAVA` to the appropriate executable.
 
 The bundled server and bot remain on **1.20.1**; installed ViaVersion provides newer Java-client compatibility. A “connection refused” message means the selected address has no reachable server, not that a server-version upgrade is required.
+
+### Early development: Peaceful, no hunger
+
+The default `MC_TRAINING_MODE=true` makes loaded worlds Peaceful and keeps both players and the bot at full food/saturation. It also prevents exhaustion. Mining, crafting, tool durability and inventories still use Survival rules; this is not Creative. The local JarvisDebug plugin applies the settings on server startup/world load and player join, including existing saves. Restart using `./start.sh` to load a newly built plugin. Your world is not reset.
+
+To introduce hunger/combat later: set `MC_TRAINING_MODE=false` in `.env`, restart, then run `/difficulty normal` as an operator (or `difficulty normal` in the server console). Also set `difficulty=normal` in `server/server.properties` for future starts. When starting the server manually, set `training-mode: false` in `server/plugins/JarvisDebug/config.yml` or pass `-Djarvis.training.mode=false` before `-jar`.
+
+### Faster model decisions
+
+The `1/20` counter is now labelled **planning decision**: twenty is a maximum number of model calls, not a required cycle or hidden reasoning stages. A model decision can propose up to `AGENT_BATCH_SIZE=4` concrete tool actions. They execute sequentially with fresh world/session checks and completion checks. A failed action discards the unexecuted tail; the model then replans from actual observations. No task-specific plan is prescribed by the controller.
+
+Local Ollama uses a constrained JSON schema for supported goal/tool names and required arguments, omits frozen goals from later replies, and defaults to shorter replies (`PLANNER_MAX_TOKENS=1536`, `LOCAL_PLANNER_THINKING=false`). Extended hidden thinking can be restored for harder objectives; increase the reply budget too. Hosted settings/model selection are unchanged. See [Ollama structured outputs](https://docs.ollama.com/capabilities/structured-outputs) and [thinking compatibility](https://docs.ollama.com/api/openai-compatibility).
+
+Graph retrieval runs once per objective; live state remains fresh each decision. Read-only queries no longer trigger redundant chest verification, and chest goals at the same coordinates share one read. Repeated invalid decisions stop after `AGENT_MAX_PLAN_ERRORS=3` consecutive errors, and identical no-progress actions are not repeatedly executed. Modern crafting-window clicks are paced by one server tick inside the guarded craft operation to reduce optimistic-inventory resync failures; this never automatically retries an uncertain craft.
+
+Exact experience is saved immediately. Optional model reflection happens after `AGENT_REFLECTION_DELAY=10` idle seconds and is preempted by a new request, so it does not delay the completion reply. Interrupted reflections keep the exact outcome; restarting may lose a pending prose reflection, not the gameplay trace. Learning runs explicitly finish reflection **between** episodes. Request duration/token counts and per-decision/per-tool timings are recorded in logs/results; these do not imply a measured hardware tokens-per-second speedup. Longer inference waits emit occasional chat updates, and `status`/`stop` still bypass inference.
+
+Player delivery uses an `item_dropped` completion goal, distinct from crafting/holding an item. Verification requires a successful, verified tool receipt for the exact item/count/recipient. It confirms a drop near the player, not pickup. These typed contracts do not independently prove that a model interpreted every natural-language request correctly.
+
+Recorded isolated acceptance checks with local `gemma4:26b` after these changes: `data/practice/20261007-005708-daf83d12/report.json` confirms 3 cobblestone + 2 dirt collected and deposited in **1 planning decision / 4 actions** (5.1 seconds planning, 15.1 seconds tools); `data/practice/20261007-005811-308dd825/report.json` confirms 2 wooden swords in **8 decisions / 14 actions**. These are individual runs, not a statistically controlled speed benchmark or proof of general mastery. Earlier failed attempts are retained too.
 
 ## Local setup and launch order
 
@@ -148,9 +172,9 @@ NEBIUS_MODEL=gemma4:26b
 
 For a production or hackathon demo, replace the local placeholder key, endpoint, and model ID with the Token Factory values from your Nebius project. Use at least one NVIDIA open-source model, make a real runtime Token Factory call (or deploy/run on Nebius AI Cloud), and keep the actual credential only in `.env` or your deployment secret store.
 
-Jarvis/Ollama is a development backend, not the permanent agent architecture. Basic gameplay currently uses deterministic typed skills and does not require either model. The next planning integration should have Token Factory produce validated skill plans, use fresh observations plus relevant Graphiti history, and check each outcome before replanning. Changing the endpoint alone does **not** add that planner to the safe chat path: the existing model planner still generates experimental JavaScript.
+Jarvis/Ollama is a development backend, not the permanent agent architecture. Default chat now calls the model through the same client. Token Factory can use the tool loop by changing endpoint/model/key, but the hosted model must support JSON response mode and that path still needs an integration run. No hosted credits were used to develop the loop. Local action/curriculum reasoning defaults on (`LOCAL_PLANNER_THINKING=true`) with `PLANNER_MAX_TOKENS=4096`; turning it off reduces latency but may weaken decisions. Reflection disables hidden local thinking. Hosted reasoning defaults are unchanged.
 
-The [Voyager approach](https://voyager.minedojo.org/) motivates a curriculum, reusable skills, and environment feedback. This project now has a reproducible basic curriculum and verified hand-written skills; automatic curriculum selection, learned skill generation, and weight fine-tuning are not implemented. A more capable model does not replace tested mechanics, navigation, or truthful success checks.
+The [Voyager approach](https://voyager.minedojo.org/) motivates curriculum, reusable experience and environment feedback. This implementation lets the model choose objectives and save procedural lessons, but does **not** implement Voyager's executable skill generation or weight training. It is experience/reflection learning, not an RL optimizer: logged rewards do not update policy weights. Reliability needs repeated varied runs, not a single successful episode.
 
 ## Persistent world memory
 
@@ -197,11 +221,11 @@ inventory
 stop
 ```
 
-For `to me`, the requesting chat player becomes the recipient. A named recipient must be visible to the bot before a handoff can proceed. The natural-language parser limits each resource quantity to 1–64. Resource batches can collect supported resources or deliver them to one shared chest; repeated resource quantities are combined, still capped at 64. Plans have at most 12 collection/delivery steps. Mixed crafting/building/farming instructions and unknown batch resources are rejected before any part starts. Multi-resource player delivery is not yet parsed.
+With the default model planner you can also try `craft 2 wooden swords`, `craft and place a chest`, or a multi-resource delivery. These are model objectives, not promises of mastered capabilities. It can ask about ambiguity or report missing materials instead of the former blanket refusal. `to me` includes the requester's name in context; a recipient must be visible. Handoff proves a nearby toss, not player pickup.
 
-If you ask for "some cobblestone," the bot asks how many; reply with a number. A correction such as "when you mine stone it becomes cobblestone" is checked against game data and does not start another mining job.
+`status`, `stop`, `inventory` and `memory` work directly, including during inference. The model is instructed to treat knowledge questions/corrections as dialogue, not physical tasks. Restart the Python controller/bot after code changes; an already-running process still uses its loaded code.
 
-`get 10 cobblestone and put it in the chest` uses matching items already carried and collects only the shortfall. `mine 10 cobblestone and put it in the chest` explicitly requests 10 **additional** items before delivery. The headless real-server regression begins with 12 cobblestone, deposits exactly 10, leaves 2, and breaks no blocks. Batch failures retain completed steps and the failing step; partial progress is not reported as full completion.
+In baseline mode, `get` uses carried items and collects shortfalls; `mine` collects additional items. Quantities are 1–64, plans at most 12 steps, and unsupported mixed batches are rejected. The model planner chooses composition/collection mode instead. Both retain partial progress without reporting it as full completion.
 
 ## Inspecting Jarvis's inventory
 
@@ -231,20 +255,42 @@ An uphill chest/player approach that has no walking route can instead plan a **c
 
 This recovery is intended for the project's open mining area. It cannot distinguish player-built stone/dirt from natural terrain; protected-area/build ownership is not implemented. A staircase may alter terrain before the chest can be opened to inspect room. Chest errors now distinguish missing chests, route failures, and inspected-but-full chests. Collected staircase cobblestone contributes toward `mine_and_deposit`'s collection target; the deposit still verifies exact chest and inventory deltas. `status` and `stop` remain available during escape.
 
-The knowledge lookup provides block properties, tool requirements, conditional drop candidates and basic recipe ingredients. It does not yet interpret every possible loot condition or custom server datapack. Farming knowledge includes crop-age conditions, but autonomous harvesting/replanting is not implemented. Resource/tool/path choices adapt to live observations and outcomes persist in memory; this is not model-weight training or automatic invention of new skills.
+The lookup provides block properties, tools, conditional drops and recipes, not every loot condition or datapack. Generic inspection, digging, placement and interactions let the model attempt harvesting/replanting/hoeing; this is not a tested farm manager. Protected-build ownership is not implemented. Prefer isolated practice before broader digging/placement in valuable builds.
 
-Examples such as `craft a chest`, `place a crafting table`, or `get 10 logs and then build a chest` are not verified features. Chat reports them as unsupported; only explicitly enabled CLI experiments can use the legacy unverified planner.
+Verification has limits: the model translates the request into criteria, so a misinterpreted request can produce wrong criteria. Current checks cover counts, block names and proximity, not crop maturity or architectural quality. Exact gains reject overshoots. Fresh crafting windows verify each recipe round; fresh transfer windows verify container and player counts.
 
 ## Tests and checks
 
-The committed Python intent-parser tests can run from a clean checkout:
+Run the Python controller/memory/planner contracts and Node gameplay-tool checks:
 
 ```bash
 python -m unittest discover -s tests -v
 npm test --prefix bot
 ```
 
-### Headless real-server practice
+### Autonomous model-led practice
+
+Start your local Ollama service, then run from the repository root without a Minecraft client:
+
+```bash
+./learn.sh --episodes 3
+./learn.sh --episodes 1 --objective "craft 2 wooden swords"
+./learn.sh --episodes 3 --seed 42
+```
+
+Without `--objective`, the model chooses each next measurable task from current observations, previous lessons and per-objective attempt/success counts. There is no fixed task list or solution sequence. Each episode varies supplied resources, station availability, resource positions and crop ages in a small peaceful arena. The model checks recipes, selects tools/actions, receives errors and replans. Learning uses the configured local model or a compatible Token Factory backend, refusing a non-local endpoint unless you explicitly pass `--allow-hosted` (which can incur costs). It does not start Ollama or download a model.
+
+Exact attempts and model-generated procedural lessons persist across runs in `data/learning/experience.sqlite3` (`LEARNING_DIR` overrides this). Retrieval provides past outcomes/strategies, not live coordinates to replay. World-specific observations still live in the separate world memory/Graphiti layer. Practice disables Graphiti ingestion for its isolated world, but shares the strategy library intentionally. Local graph extraction is paused while the gameplay model runs to avoid competing inference workloads.
+
+Every run saves `report.json`, `model.jsonl` (actual model requests/responses), bot/server logs and the disposable world under `data/practice/`. Server-authoritative counts independently audit the model-declared goals; failed or disputed outcomes are not promoted as mastered skills. The logged binary reward is diagnostic, **not** gradient training. These files contain gameplay context/player names/coordinates and should remain private/ignored.
+
+Controls: `AGENT_MAX_STEPS=20`, `AGENT_TIMEOUT=600` seconds for an objective, `MODEL_STEP_TIMEOUT=120` for one model request. Optional reflection has its own bounded request after execution. Generic tools process at most 64 items per call, with loaded-range and operation timeouts; larger work requires multiple model-selected calls. Ctrl+C preserves artifacts and stops only the owned practice server/bot. Your normal world, world memory and existing Ollama service are not reset or shut down.
+
+This removes the hand-written task allowlist, not every execution contract. Building/farming are now attemptable compositions, not universally reliable capabilities. Successful episodes are evidence to accumulate; failures need investigation, not automatic “learned” labels. The current arena does not establish open-world survival/generalization, and an independent intent checker/property-based crop verification remains future work.
+
+Local-model evidence on October 6, 2026: a two-wooden-sword objective was independently confirmed after two earlier unsuccessful attempts. Three model-selected cobblestone episodes passed across varied setups; with progress history and reasoning enabled, the model then selected and completed a stone-pickaxe objective. The pickaxe run included collecting cobblestone, processing logs into planks/sticks, crafting/placing a table and crafting the pickaxe. These are controlled examples, not a general success-rate estimate or proof of autonomous farming/building. Reports and raw model traces remain in the ignored practice directories.
+
+### Headless regression baseline
 
 Run these from the repository root, without launching the normal stack or a Minecraft client:
 
@@ -255,11 +301,11 @@ Run these from the repository root, without launching the normal stack or a Mine
 ./practice.sh --cases held_deposit,partial_stack,multiple_stacks --repeat 3
 ```
 
-The default curriculum covers 11 cases: exact held/partial/multiple-stack deposits, collection of logs/dirt/cobblestone, the three-resource batch, missing pickaxe, full chest, inaccessible stone, and an unsupported batch. `staircase` is an optional twelfth case. Expected safe refusals pass only when the expected error is returned and authoritative state shows no unrequested excavation or inventory change. Collection/delivery is graded on server chest counts, remaining inventory, excavation counts, health, and underfoot-mining violations—not just the bot's success message.
+The default regression suite covers 11 cases: exact held/partial/multiple-stack deposits, collection of logs/dirt/cobblestone, the three-resource batch, missing pickaxe, full chest, inaccessible stone, and an unsupported batch. `staircase` is an optional twelfth case. Expected safe refusals pass only when the expected error is returned and authoritative state shows no unrequested excavation or inventory change. Collection/delivery is graded on server chest counts, remaining inventory, excavation counts, health, and underfoot-mining violations—not just the bot's success message.
 
 Each run creates `data/practice/<UTC timestamp>-<unique ID>/` with its own disposable Purpur world, SQLite memory, `report.json`, `server.log`, and `bot.log`. It copies cached server runtime artifacts, **not** the normal worlds or plugins; uses separate ephemeral loopback ports; disables Graphiti indexing and model inference; and starts only its owned server/bot. No Ollama or Nebius call is needed. The console-only `PracticeOracle` fixture plugin is built locally and installed only in this guarded practice server. Ctrl+C stops owned processes and preserves artifacts. Each run consumes disk space (cached runtime plus a small world); runs are retained for inspection rather than automatically deleted.
 
-On October 6, 2026, a complete 12-case run passed on the installed Purpur 1.20.1 server. These are small deterministic, peaceful fixtures with tools supplied and exposed ground-level resource blocks. Passing them does not establish natural-tree traversal, survival under enemies, farming, arbitrary terrain navigation, or autonomous learning. New skills and regression fixtures should be added together before enabling broader model-generated plans.
+On October 6, 2026, a complete 12-case baseline run passed on the installed Purpur 1.20.1 server. These are small deterministic, peaceful fixtures with tools supplied and exposed ground-level resource blocks. Passing them does not establish natural-tree traversal, survival under enemies, farming, arbitrary navigation, or model-led success. Retain regression checks when tools change; they are not the model's learning curriculum.
 
 `--timeout` sets a per-case deadline (default 90 seconds, allowed 5–180). A timed-out case cancels work and aborts the suite to avoid overlapping a reset with unsettled actions. Use `MINECRAFT_PYTHON` / `MINECRAFT_JAVA` for other installations; a Java 21 JDK and the existing cached Purpur runtime are required.
 
@@ -290,7 +336,7 @@ The [official rules](https://nebiusglobalaihackathon.devpost.com/rules) control.
 - Provide a working demo, hosted app, or test build; an English project description; and a public YouTube demonstration video under three minutes that shows the project functioning.
 - If the project predates the submission period, explain the significant hackathon-period changes. Keep third-party integrations and media properly licensed.
 
-The strongest next demo milestone is a live-server recording of the typed `mine_and_give` path with its observable inventory evidence, followed by verified crafting/placement primitives and a persistent world-memory graph.
+The next demo milestone is repeated independently confirmed model-led crafting/delivery, followed by farming and terrain recovery across varied setups, then a Token Factory runtime integration and live-survival acceptance recording.
 
 ## License
 

@@ -91,6 +91,7 @@ try:
         "WS_PORT": str(config.ws_port),
         "MC_WORLD_ID": os.getenv("MC_WORLD_ID") or f"{config.mc_host}:{config.mc_port}",
         "BOT_USERNAME": config.mc_username,
+        "MC_TRAINING_MODE": "true" if config.mc_training_mode else "false",
         "NEEDS_OLLAMA": "1" if any(local_ollama(url) for url in endpoints) else "0",
     }
     for key, value in settings.items():
@@ -295,7 +296,7 @@ SERVER_FIFO="$RUN_DIR/server.stdin"
 mkfifo "$SERVER_FIFO"
 (
     cd "$ROOT_DIR/server"
-    exec "$JAVA_BIN" -Djarvis.bot.username="$BOT_USERNAME" -Xms2G -Xmx2G -jar server.jar --nogui --host 127.0.0.1 --port "$MC_PORT"
+    exec "$JAVA_BIN" -Djarvis.bot.username="$BOT_USERNAME" -Djarvis.training.mode="${MC_TRAINING_MODE:-true}" -Xms2G -Xmx2G -jar server.jar --nogui --host 127.0.0.1 --port "$MC_PORT"
 ) <"$SERVER_FIFO" >"$RUN_DIR/server.log" 2>&1 3>&- &
 SERVER_PID=$!
 exec 3>"$SERVER_FIFO"
@@ -320,6 +321,7 @@ echo "READY — join Minecraft Java at 127.0.0.1:$MC_PORT"
 echo "Agent: $BOT_USERNAME. In game chat: mine 3 oak logs and drop them to me"
 echo "Memory recall: memory"
 echo "Inventory: chat 'inventory', /jarvisinventory, or right-click $BOT_USERNAME (read-only)."
+if [ "${MC_TRAINING_MODE:-true}" = true ]; then echo "Development mode: Peaceful difficulty + full food, still Survival crafting/mining."; fi
 echo "Keep this terminal open. Ctrl+C stops the agent and saves/stops the server."
 echo
 while true; do

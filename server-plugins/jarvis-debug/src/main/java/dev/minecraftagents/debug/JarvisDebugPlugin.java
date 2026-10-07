@@ -32,6 +32,18 @@ public final class JarvisDebugPlugin extends JavaPlugin implements Listener {
         long interval = Math.max(2L, getConfig().getLong("refresh-ticks", 10L));
         getServer().getScheduler().runTaskTimer(this, this::refreshViews, interval, interval);
         getLogger().info("Read-only inventory inspection enabled for " + botUsername);
+        boolean training = Boolean.parseBoolean(System.getProperty("jarvis.training.mode",
+            Boolean.toString(getConfig().getBoolean("training-mode", true))));
+        if (training) {
+            var assistance = new TrainingModeListener(true);
+            getServer().getPluginManager().registerEvents(assistance, this);
+            getServer().getWorlds().forEach(assistance::initializeWorld);
+            getServer().getOnlinePlayers().forEach(assistance::maintainPlayer);
+            // Also covers respawns and food state restored by other plugins.
+            getServer().getScheduler().runTaskTimer(this,
+                () -> getServer().getOnlinePlayers().forEach(assistance::maintainPlayer), 20L, 100L);
+            getLogger().info("Training mode: Peaceful worlds, full food; Survival mechanics unchanged.");
+        }
     }
 
     private boolean allowed(Player viewer) {

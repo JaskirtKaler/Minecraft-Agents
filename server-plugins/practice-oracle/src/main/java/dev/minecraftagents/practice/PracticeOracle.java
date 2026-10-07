@@ -8,6 +8,10 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Random;
+import java.util.Base64;
+import java.nio.charset.StandardCharsets;
+import com.google.gson.reflect.TypeToken;
 import org.bukkit.GameMode;
 import org.bukkit.Location;
 import org.bukkit.Material;
@@ -32,6 +36,7 @@ public final class PracticeOracle extends JavaPlugin implements Listener {
     private int unsafeBreaks;
     private String targetName = "PracticeAgent";
     private World arena;
+    private final Random random = new Random(Long.getLong("minecraftagents.practice.seed", 0L));
 
     @Override public void onEnable() {
         try {
@@ -74,7 +79,7 @@ public final class PracticeOracle extends JavaPlugin implements Listener {
 
     private void setup(String scenario, Player bot) {
         var valid = List.of("held_deposit", "partial_stack", "multiple_stacks", "collect_cobble", "collect_logs",
-            "collect_dirt", "batch", "missing_tool", "full_chest", "blocked_stone", "unsupported_batch", "staircase");
+            "collect_dirt", "batch", "missing_tool", "full_chest", "blocked_stone", "unsupported_batch", "staircase", "explore");
         if (!valid.contains(scenario)) throw new IllegalArgumentException("Unknown fixture: " + scenario);
         bot.closeInventory();
         resetTerrain();
@@ -117,6 +122,32 @@ public final class PracticeOracle extends JavaPlugin implements Listener {
             for (int slot = 0; slot < chest.getSize(); slot++) chest.setItem(slot, new ItemStack(Material.DIRT, 64));
         }
         bot.getInventory().setHeldItemSlot(0);
+        if (scenario.equals("explore")) {
+            // Vary starting materials, table availability and resource locations.
+            // This is an environment generator, NOT a prescribed task curriculum.
+            bot.getInventory().setItem(3, new ItemStack(Material.OAK_LOG, 2 + random.nextInt(5)));
+            bot.getInventory().setItem(4, new ItemStack(Material.WHEAT_SEEDS, 3 + random.nextInt(5)));
+            bot.getInventory().setItem(5, new ItemStack(Material.WOODEN_HOE));
+            if (random.nextBoolean()) set(4, 64, -2, Material.CRAFTING_TABLE);
+            for (int x = 8; x <= 17; x++) {
+                set(x, 64, 4, Material.AIR);
+                set(x, 64, -4, Material.AIR);
+                int z = 4 + random.nextInt(3);
+                set(x, 64, z, Material.OAK_LOG);
+                set(x, 64, -4 - random.nextInt(3), Material.DIRT);
+            }
+            for (int x = 10; x <= 14; x++) {
+                set(x, 63, 8, Material.FARMLAND);
+                var farmland = (org.bukkit.block.data.type.Farmland) arena.getBlockAt(x, 63, 8).getBlockData();
+                farmland.setMoisture(7);
+                arena.getBlockAt(x, 63, 8).setBlockData(farmland, false);
+                set(x, 64, 8, Material.WHEAT);
+                var crop = (org.bukkit.block.data.Ageable) arena.getBlockAt(x, 64, 8).getBlockData();
+                crop.setAge(random.nextBoolean() ? crop.getMaximumAge() : random.nextInt(4));
+                arena.getBlockAt(x, 64, 8).setBlockData(crop, false);
+            }
+            set(12, 63, 9, Material.WATER);
+        }
         bot.updateInventory();
     }
 
@@ -150,9 +181,27 @@ public final class PracticeOracle extends JavaPlugin implements Listener {
             Player bot = getServer().getPlayerExact(targetName);
             if (bot == null) throw new IllegalStateException("Practice bot is offline");
             if (args[0].equals("setup") && args.length == 4) setup(args[3], bot);
-            else if (!args[0].equals("snapshot")) throw new IllegalArgumentException("Unknown command");
+            else if (!args[0].equals("snapshot") && !args[0].equals("check")) throw new IllegalArgumentException("Unknown command");
             reply.put("ok", true);
-            reply.put("state", snapshot(bot));
+            var state = snapshot(bot);
+            if (args[0].equals("check") && args.length == 4) {
+                String data = new String(Base64.getUrlDecoder().decode(args[3]), StandardCharsets.UTF_8);
+                List<Map<String, Object>> goals = json.fromJson(data, new TypeToken<List<Map<String, Object>>>(){}.getType());
+                if (goals.size() > 16) throw new IllegalArgumentException("Too many goals");
+                Map<String, String> blocks = new LinkedHashMap<>();
+                Map<String, Map<String, Integer>> containers = new LinkedHashMap<>();
+                for (var goal : goals) if (goal.get("position") instanceof Map<?, ?> p) {
+                    int x = ((Number)p.get("x")).intValue(), y = ((Number)p.get("y")).intValue(), z = ((Number)p.get("z")).intValue();
+                    if (new Location(arena, x, y, z).distance(bot.getLocation()) > 64) throw new IllegalArgumentException("Goal outside oracle radius");
+                    String key = x + "," + y + "," + z;
+                    var block = arena.getBlockAt(x, y, z);
+                    blocks.put(key, block.getType().name().toLowerCase(Locale.ROOT));
+                    if (block.getState() instanceof org.bukkit.block.Container container) containers.put(key, totals(container.getInventory().getContents()));
+                }
+                state.put("blocks", blocks);
+                state.put("containers", containers);
+            }
+            reply.put("state", state);
         } catch (Exception error) {
             reply.put("ok", false);
             reply.put("error", error.getMessage());
