@@ -1,0 +1,3 @@
+# Optional navigation experiment. The normal agent does not import this package.
+# Already installed in the minecraft-agent Conda environment on 2026-10-08.
+numpy==2.5.3

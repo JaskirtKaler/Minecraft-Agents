@@ -257,6 +257,8 @@ def main():
     parser.add_argument('--learn', action='store_true', help='Model chooses curriculum/actions in varied setups; makes inference calls')
     parser.add_argument('--episodes', type=int, default=3, help='Learning episodes (1–20)')
     parser.add_argument('--objective', help='Optional learning objective; otherwise the model chooses each objective')
+    parser.add_argument('--suite', choices=['grounding', 'recovery'], help='Model-led requested-task benchmarks: grounding has 6 episodes, recovery has 3 sapling/gathering episodes')
+    parser.add_argument('--suite-task', help='Run one named request from a suite; requires --episodes 1')
     parser.add_argument('--seed', type=int, help='Reproducible learning environment seed; default random per run')
     parser.add_argument('--allow-hosted', action='store_true', help='Explicitly permit configured non-local inference and costs in learning mode')
     args = parser.parse_args()
@@ -269,6 +271,15 @@ def main():
         parser.error("repeat must be 1–10; timeout must be 5–180 seconds")
     if not 1 <= args.episodes <= 20 or (args.learn and args.cases):
         parser.error('episodes must be 1–20; --learn cannot be combined with fixed --cases')
+    if args.suite and (not args.learn or args.objective or args.episodes > (6 if args.suite == 'grounding' else 3)):
+        parser.error('--suite requires --learn, no --objective, and no more episodes than its defined tasks.')
+    if args.suite_task:
+        from practice.grounded_tasks import tasks, recovery_tasks
+        if not args.suite or args.episodes != 1:
+            parser.error('--suite-task requires --suite and --episodes 1.')
+        available = (tasks if args.suite == 'grounding' else recovery_tasks)(0)
+        if args.suite_task not in {task.name for task in available}:
+            parser.error('Unknown suite task; choose ' + ', '.join(task.name for task in available))
     names = args.cases.split(",") if args.cases else [case.name for case in SCENARIOS]
     if any(name not in catalog for name in names):
         parser.error("Unknown case; use --list")

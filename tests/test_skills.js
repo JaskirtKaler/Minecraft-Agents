@@ -5,6 +5,7 @@ const { runStateTests } = require('./test_state');
 const { runResourceTests } = require('./test_resources');
 const { runNavigationTests } = require('./test_navigation');
 const { runToolTests } = require('./test_tools');
+const { runObservationTests } = require('./test_observations');
 
 function position (x, y, z) {
   return { x, y, z };
@@ -100,7 +101,9 @@ async function testMineLogs () {
   assert.equal(result.data.observed_after, 2);
   assert.equal(result.data.blocks_dug, 2);
   assert.equal(calls.digs.length, 2);
-  assert.equal(calls.goto[0].constructor.name, 'GoalGetToBlock');
+  assert.equal(calls.goto[0].constructor.name, 'GoalCompositeAll');
+  assert.equal(calls.goto[0].isEnd({ x: 1, y: 65, z: 0 }), false, 'Do not stand on the log.');
+  assert.equal(calls.goto[0].isEnd({ x: 1, y: 64, z: 1 }), true, 'Approach beside it.');
 }
 
 async function testFailedLogPickupDoesNotMineAnotherLog () {
@@ -226,6 +229,7 @@ async function testGetAndGiveUsesHeldLogs () {
 }
 
 async function run () {
+  await require('./test_rl_navigation').runRlNavigationTests();
   await testMineLogs();
   await testFailedLogPickupDoesNotMineAnotherLog();
   await testGiveExactCount();
@@ -236,6 +240,7 @@ async function run () {
   await testGetAndGiveUsesHeldLogs();
   await testActionableNoLogsError();
   await runStateTests();
+  await runObservationTests();
   await runResourceTests();
   await runNavigationTests();
   await runToolTests();

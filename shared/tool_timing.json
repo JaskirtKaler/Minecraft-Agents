@@ -1,0 +1,9 @@
+{
+  "shortMs": 60000,
+  "gatherBaseMs": 90000,
+  "gatherPerItemMs": 8000,
+  "gatherMaxMs": 300000,
+  "gatherIdleMs": 60000,
+  "rpcGraceMs": 20000,
+  "settleMs": 15000
+}

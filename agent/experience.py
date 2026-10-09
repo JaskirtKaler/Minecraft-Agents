@@ -27,11 +27,18 @@ class ExperienceLibrary:
 
     def recall(self, objective, limit=5):
         words = set(re.findall(r"[a-z_]{3,}", objective.lower()))
-        rows = self.db.execute("SELECT objective,verified,lesson,trace,world FROM episodes ORDER BY created DESC,rowid DESC LIMIT 100").fetchall()
+        rows = self.db.execute("SELECT objective,verified,lesson,trace,world,result FROM episodes ORDER BY created DESC,rowid DESC LIMIT 100").fetchall()
         rows = sorted(rows, key=lambda r: len(words & set(re.findall(r"[a-z_]{3,}", (r["objective"] + ' ' + r["lesson"]).lower()))), reverse=True)
-        return [{"objective": row["objective"], "verified": bool(row["verified"]), "lesson": row["lesson"],
-                 "tools_used": [step.get("action", {}).get("name") for step in json.loads(row["trace"]) if step.get("action")],
-                 "historical_world": row["world"]} for row in rows[:limit]]
+        recalled = []
+        for row in rows[:limit]:
+            data = json.loads(row['result']).get('data', {})
+            goals = data.get('goals', [])
+            recalled.append({"objective": row["objective"], "verified": bool(row["verified"]), "lesson": row["lesson"],
+                "checked_goals": goals, "goal_review_approved": any(review.get('covers_request') is True
+                    and review.get('goals') == goals for review in data.get('intent_reviews', [])),
+                "tools_used": [step.get("action", {}).get("name") for step in json.loads(row["trace"]) if step.get("action")],
+                "historical_world": row["world"]})
+        return recalled
 
     def close(self):
         self.db.close()

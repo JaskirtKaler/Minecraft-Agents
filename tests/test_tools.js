@@ -106,12 +106,29 @@ async function runToolTests () {
       slots: [...Array(27).fill(null), { name: 'cobblestone', count: carried }, ...Array(35).fill(null)],
       containerItems: () => stored ? [{ name: 'cobblestone', count: stored }] : [],
       deposit: async (_id, _meta, quantity) => { stored += quantity; carried -= quantity; },
+      withdraw: async (_id, _meta, quantity) => { stored -= quantity; carried += quantity; },
       close () { closes++; }
     }) };
   const transferred = await executeTool(transferBot, { name: 'deposit', args: { item: 'cobblestone', count: 2, position: target } });
   assert.equal(transferred.verified, true, transferred.message);
   assert.equal(carried, 1);
   assert.equal(closes, 2, 'Both windows close once despite nested finally cleanup.');
+
+  stored = 6;
+  const boundedWithdrawal = { name: 'withdraw', args: { item: 'cobblestone', count: 3, position: target },
+    container_constraint: { item: 'cobblestone', position: target, minimum: 4 } };
+  const blocked = await executeTool(transferBot, boundedWithdrawal);
+  assert.equal(blocked.data.error_code, 'GOAL_QUANTITY_LIMIT');
+  assert.equal(stored, 6, 'An overshooting transfer must not mutate the chest.');
+  boundedWithdrawal.args.count = 2;
+  assert.equal((await executeTool(transferBot, boundedWithdrawal)).verified, true);
+  assert.equal(stored, 4);
+
+  // A player can change the chest after the controller observed it. The Node
+  // check uses the window count, not that earlier snapshot.
+  stored = 5;
+  assert.equal((await executeTool(transferBot, boundedWithdrawal)).data.error_code, 'GOAL_QUANTITY_LIMIT');
+  assert.equal(stored, 5);
 
   carried = 3;
   // Simulate a conflicting/stale player inventory despite apparent chest gain.

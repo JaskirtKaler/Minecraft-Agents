@@ -22,6 +22,14 @@ def tool_schema(tool_names):
             fields = {'names': {'type': 'array', 'items': IDENTIFIER, 'minItems': 1, 'maxItems': 16},
                       'radius': {'type': 'integer', 'minimum': 1, 'maximum': 64}}
             required = ['names']
+        elif name == 'craft_budget':
+            step = object_schema({'item': IDENTIFIER, 'count': TOOL_COUNT,
+                                  'recipe_index': {'type': 'integer', 'minimum': 0}}, ('item', 'count'))
+            fields = {'steps': {'type': 'array', 'items': step, 'minItems': 1, 'maxItems': 16}}
+            required = ['steps']
+        elif name == 'planting_sites':
+            fields = {'item': IDENTIFIER, 'radius': {'type': 'integer', 'minimum': 1, 'maximum': 32}}
+            required = ['item']
         elif name == 'escape_staircase':
             fields = {'rise': {'type': 'integer', 'minimum': 1, 'maximum': 8}}
             required = ['rise']
@@ -61,14 +69,18 @@ def tool_schema(tool_names):
 
 def decision_schema(tool_names, batch_size=4, include_goals=True):
     goals = []
-    for kind in ("inventory_gain", "inventory_at_least", "container_gain", "item_dropped"):
+    for kind in ("inventory_gain", "inventory_at_least", "container_gain", "container_loss", "item_dropped"):
         fields = {"kind": {"const": kind}, "item": IDENTIFIER, "count": COUNT}
-        if kind == "container_gain":
+        if kind in {"container_gain", "container_loss"}:
             fields["position"] = POSITION
         if kind == "item_dropped":
             fields["recipient"] = IDENTIFIER
-        goals.append(object_schema(fields, fields))
-    goals += [object_schema({"kind": {"const": "block_is"}, "block": IDENTIFIER, "position": POSITION},
+        required = list(fields)
+        if kind == 'inventory_gain':
+            fields['comparison'] = {'enum': ['exact', 'at_least']}
+        goals.append(object_schema(fields, required))
+    goals += [object_schema({"kind": {"const": "block_is"}, "block": IDENTIFIER, "position": POSITION,
+                            "must_change": {'type': 'boolean'}},
                             ("kind", "block", "position")),
               object_schema({"kind": {"const": "position_near"}, "position": POSITION,
                              "radius": {"type": "number", "exclusiveMinimum": 0, "maximum": 8}},
@@ -100,3 +112,7 @@ def decision_schema(tool_names, batch_size=4, include_goals=True):
 LESSON_SCHEMA = object_schema({"lesson": {"type": "string", "maxLength": 1500}}, ("lesson",))
 CURRICULUM_SCHEMA = object_schema({"objective": {"type": "string", "maxLength": 600},
                                    "reason": {"type": "string", "maxLength": 240}}, ("objective", "reason"))
+GOAL_REVIEW_SCHEMA = object_schema({'reason': {'type': 'string', 'minLength': 12, 'maxLength': 600},
+    'missing_outcomes': {'type': 'array', 'items': {'type': 'string', 'maxLength': 240}, 'maxItems': 8},
+    'covers_request': {'type': 'boolean'}},
+    ('reason', 'missing_outcomes', 'covers_request'))

@@ -23,8 +23,10 @@ const {
 const { executeCodeSnippet } = require('./sandbox');
 const { executeTask } = require('./skills');
 const { executeTool } = require('./tools');
-const { cancelOperation } = require('./operations');
+const { cancelOperation, operationStatus } = require('./operations');
 const { describeSubject } = require('./knowledge');
+const { getObservation } = require('./observations');
+const { navigationFrame, executeNavigationStep } = require('./rl_navigation');
 
 // Configuration from environment or defaults
 const HOST = process.env.MC_HOST || 'localhost';
@@ -354,6 +356,19 @@ async function handleOrchestratorMessage(message) {
     const { type, id, code, text, task, timeoutMs } = message;
 
     switch (type) {
+        case 'get_navigation_frame':
+            try {
+                sendToOrchestrator({ type: 'navigation_response', id, data: navigationFrame(bot) });
+            } catch (error) {
+                sendToOrchestrator({ type: 'navigation_response', id,
+                    error: { code: error.code || 'INVALID_NAVIGATION_FRAME', message: error.message } });
+            }
+            break;
+        case 'rl_step': {
+            const result = await executeNavigationStep(bot, message.step);
+            sendToOrchestrator({ type: 'execution_result', id, result, currentState: getBotState(bot) });
+            break;
+        }
         case 'execute_tool': {
             if (!isBotSpawned()) {
                 sendToOrchestrator({ type: 'execution_result', id, result: {
@@ -370,8 +385,20 @@ async function handleOrchestratorMessage(message) {
         case 'cancel_task':
             cancelOperation(bot);
             break;
+        case 'get_operation_status':
+            sendToOrchestrator({ type: 'operation_status', id, data: operationStatus(bot) });
+            break;
         case 'get_knowledge':
             sendToOrchestrator({ type: 'knowledge_response', id, data: describeSubject(bot, message.subject) });
+            break;
+        case 'get_observation':
+            try {
+                sendToOrchestrator({ type: 'observation_response', id,
+                    data: getObservation(bot, message.options) });
+            } catch (error) {
+                sendToOrchestrator({ type: 'observation_response', id,
+                    error: { code: 'INVALID_OBSERVATION_REQUEST', message: error.message } });
+            }
             break;
         case 'get_state':
             sendToOrchestrator({

@@ -10,6 +10,7 @@ import logging
 from typing import Dict, Any, Optional, Callable
 import websockets
 from websockets.server import WebSocketServerProtocol
+from agent.observations import validate_observation
 
 logger = logging.getLogger("BridgeServer")
 logging.basicConfig(level=logging.INFO)
@@ -70,7 +71,15 @@ class MineflayerBridge:
             self._update_state(message.get("data", {}))
             logger.debug("Received background state update from bot.")
 
-        elif msg_type == "knowledge_response":
+        elif msg_type in {"observation_response", "navigation_response"}:
+            future = self.pending_requests.pop(msg_id, None)
+            if future and not future.done():
+                if message.get('error'):
+                    future.set_exception(ValueError(message['error'].get('message', 'Observation request failed.')))
+                else:
+                    future.set_result(message.get('data', {}))
+
+        elif msg_type in {"knowledge_response", "operation_status"}:
             future = self.pending_requests.pop(msg_id, None)
             if future and not future.done():
                 future.set_result(message.get("data", {}))
@@ -102,6 +111,20 @@ class MineflayerBridge:
         """Requests current game state from Mineflayer bot."""
         return await self._request({"type": "get_state"}, timeout=timeout)
 
+    async def get_observation(self, horizontal_radius: int = 3, vertical_radius: int = 2,
+                              timeout: float = 10.0) -> Dict[str, Any]:
+        """Read a bounded terrain/motion snapshot without executing tools or inference."""
+        for value, maximum, name in ((horizontal_radius, 5, 'horizontal_radius'),
+                                     (vertical_radius, 3, 'vertical_radius')):
+            if type(value) is not int or not 0 <= value <= maximum:
+                raise ValueError(f'{name} must be an integer from 0 to {maximum}.')
+        payload = await self._request({'type': 'get_observation', 'options': {
+            'horizontalRadius': horizontal_radius, 'verticalRadius': vertical_radius
+        }}, timeout=timeout)
+        observation = validate_observation(payload)
+        self._update_state(observation['state'])
+        return observation
+
     async def execute_code(
         self,
         code: str,
@@ -114,6 +137,26 @@ class MineflayerBridge:
             payload["timeoutMs"] = execution_timeout_ms
         return await self._request(payload, timeout=timeout)
 
+    async def get_navigation_frame(self, timeout: float = 10.0):
+        """Experimental perception, refused by bots outside disposable RL worlds."""
+        from rl.navigation import validate_frame
+        frame = validate_frame(await self._request({'type': 'get_navigation_frame'}, timeout=timeout))
+        self._update_state(frame['observation']['state'])
+        return frame
+
+    async def execute_rl_step(self, action: int, frame, timeout: float = 10.0):
+        """One gated navigation option, guarded against stale sessions/positions."""
+        if type(action) is not int or not 0 <= action <= 4:
+            raise ValueError('RL action must be an integer from 0 to 4.')
+        from rl.navigation import validate_frame
+        frame = validate_frame(frame)
+        if frame['backend'] != 'mineflayer':
+            raise ValueError('Synthetic frames cannot authorize Minecraft actions.')
+        return await self._request({'type': 'rl_step', 'step': {
+            'action': action, 'expectedWorld': frame['observation']['state']['world'],
+            'expectedPosition': frame['observation']['terrain']['center']
+        }}, timeout=timeout)
+
     async def execute_task(self, task: Dict[str, Any], timeout: float = 240.0) -> Dict[str, Any]:
         """Runs an allowlisted, verified Mineflayer skill on the Node bot."""
         return await self._request({"type": "execute_task", "task": task}, timeout=timeout)
@@ -121,8 +164,25 @@ class MineflayerBridge:
     async def get_knowledge(self, subject: str) -> Dict[str, Any]:
         return await self._request({"type": "get_knowledge", "subject": subject}, timeout=10)
 
-    async def execute_tool(self, tool: Dict[str, Any], timeout: float = 80.0) -> Dict[str, Any]:
+    async def execute_tool(self, tool: Dict[str, Any], timeout: float | None = None) -> Dict[str, Any]:
+        from agent.tool_timing import tool_timeout, POLICY
+        if timeout is None:
+            timeout = tool_timeout(tool) + POLICY['rpcGraceMs'] / 1000
         return await self._request({"type": "execute_tool", "tool": tool}, timeout=timeout)
+
+    async def wait_for_operation_idle(self, operation_id=None):
+        """Passive handshake: never retry an unsettled or unrelated operation."""
+        from agent.tool_timing import POLICY
+        if not isinstance(operation_id, str) or not operation_id:
+            raise RuntimeError('Missing operation identity; cannot authorize continuation')
+        async with asyncio.timeout(POLICY['settleMs'] / 1000):
+            while True:
+                status = await self._request({'type': 'get_operation_status'}, timeout=5)
+                if status.get('busy') is False and status.get('active') is False:
+                    return status
+                if status.get('busy') is not True or status.get('operation_id') != operation_id:
+                    raise RuntimeError('Operation status is unknown or belongs to another operation')
+                await asyncio.sleep(.25)
 
     async def cancel_task(self):
         if self.active_client:
@@ -142,7 +202,7 @@ class MineflayerBridge:
             await self.active_client.send(json.dumps(request))
             return await asyncio.wait_for(future, timeout=timeout)
         except (asyncio.TimeoutError, asyncio.CancelledError):
-            if payload.get("type") in {"execute_task", "execute_code", "execute_tool"}:
+            if payload.get("type") in {"execute_task", "execute_code", "execute_tool", "rl_step"}:
                 await self.cancel_task()
             raise
         finally:

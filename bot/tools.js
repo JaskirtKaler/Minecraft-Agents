@@ -4,10 +4,12 @@ const { goals } = require('mineflayer-pathfinder');
 const { runOperation } = require('./operations');
 const { executeTask } = require('./skills');
 const { walkTo } = require('./navigation');
-const { dataFor, describeSubject } = require('./knowledge');
+const { dataFor, describeSubject, plantingRule } = require('./knowledge');
+const { targetFacts, recipeInfo, recipeBudget, craftingBudget, plantingSites } = require('./grounding');
 const { recoverPickup } = require('./pickup');
+const { toolTiming } = require('./tool_timing');
 
-const READ_TOOLS = new Set(['inspect', 'recipes', 'find_blocks', 'container']);
+const READ_TOOLS = new Set(['inspect', 'recipes', 'craft_budget', 'find_blocks', 'container', 'planting_sites']);
 const SKILLS = new Set(['mine_logs', 'mine_resource', 'give_item', 'deposit_item', 'escape_staircase']);
 const count = (bot, name) => bot.inventory.items().filter(item => item.name === name).reduce((n, item) => n + item.count, 0);
 function fail (code, message, data = {}) { throw Object.assign(new Error(message), { code, data }); }
@@ -39,26 +41,20 @@ async function approach (bot, block) {
   await walkTo(bot, new goals.GoalGetToBlock(block.position.x, block.position.y, block.position.z));
   return loaded(bot, block.position);
 }
-function recipeInfo (bot, recipe) {
-  const data = dataFor(bot);
-  const ingredients = {};
-  for (const entry of recipe.delta) if (entry.count < 0) {
-    const name = data.items[entry.id]?.name || String(entry.id);
-    ingredients[name] = (ingredients[name] || 0) - entry.count;
-  }
-  return { ingredients, output: recipe.result.count, requires_table: recipe.requiresTable };
-}
-
 async function executeTool (bot, tool, options = {}) {
   const name = tool?.name;
   const args = tool?.args || {};
-  if (SKILLS.has(name)) return executeTask(bot, { name, args }, { ...options, timeoutMs: options.timeoutMs ?? 60000 });
+  if (SKILLS.has(name)) return executeTask(bot, { name, args }, { ...toolTiming(tool), ...options });
   try {
     const result = await runOperation(bot, async b => {
       options.onProgress?.('tool: ' + name);
       if (name === 'inspect') {
-        return args.position ? describeBlock(loaded(b, args.position)) : describeSubject(b, args.item);
+        return args.position ? targetFacts(b, loaded(b, args.position)) : describeSubject(b, args.item);
       }
+      if (name === 'craft_budget') {
+        return craftingBudget(b, args.steps, totals(b.inventory.items()));
+      }
+      if (name === 'planting_sites') return plantingSites(b, args.item, args.radius ?? 24);
       if (name === 'find_blocks') {
         const names = Array.isArray(args.names) ? args.names : [args.name];
         if (!names.length || names.length > 16 || !names.every(n => typeof n === 'string')) fail('INVALID_ARGUMENT', 'Supply 1–16 block names.');
@@ -72,14 +68,21 @@ async function executeTool (bot, tool, options = {}) {
         if (!item) fail('UNKNOWN_ITEM', 'Unknown item: ' + args.item);
         const quantity = amount(args.count);
         return { item: item.name, requested_output: quantity,
-          recipes: b.recipesAll(item.id, null, true).slice(0, 24).map(r => recipeInfo(b, r)),
+          recipes: b.recipesAll(item.id, null, true).slice(0, 24).map((r, index) => ({ recipe_index: index,
+            ...recipeBudget(b, r, quantity, totals(b.inventory.items())) })),
           craftable_now_with_table: b.recipesFor(item.id, null, quantity, true).slice(0, 4).map(r => recipeInfo(b, r)),
           craftable_now_without_table: b.recipesFor(item.id, null, quantity, null).slice(0, 4).map(r => recipeInfo(b, r)) };
       }
       if (name === 'walk_to') {
         const p = position(args.position);
         loaded(b, p);
-        const goal = args.adjacent ? new goals.GoalGetToBlock(p.x, p.y, p.z) : new goals.GoalBlock(p.x, p.y, p.z);
+        // GetToBlock alone also accepts vertically adjacent nodes in the
+        // target's column. That can put the bot inside an AIR planting cell.
+        // Adjacent means beside the target, never occupying its column.
+        const goal = args.adjacent ? new goals.GoalCompositeAll([
+          new goals.GoalGetToBlock(p.x, p.y, p.z),
+          new goals.GoalInvert(new goals.GoalXZ(p.x, p.z))
+        ]) : new goals.GoalBlock(p.x, p.y, p.z);
         await walkTo(b, goal);
         return { position: b.entity.position };
       }
@@ -139,6 +142,13 @@ async function executeTool (bot, tool, options = {}) {
       }
       if (name === 'place') {
         const target = loaded(b, args.position);
+        const planting = plantingRule(b, args.item);
+        if (planting) {
+          const soil = b.blockAt(target.position.offset(0, -1, 0));
+          if (!soil || !planting.soils.includes(soil.name)) fail('INVALID_PLANTING_TARGET',
+            'Plant into the empty cell immediately above supported observed soil, not into the soil or above another plant.',
+            { planting, target: targetFacts(b, target) });
+        }
         if (!['air', 'cave_air', 'void_air'].includes(target.name)) fail('OCCUPIED_BLOCK', 'Placement cell is occupied by ' + target.name);
         const p = target.position;
         const feet = b.entity.position;
@@ -159,7 +169,9 @@ async function executeTool (bot, tool, options = {}) {
         await b.placeBlock(reference, face);
         if (b.waitForTicks) await b.waitForTicks(2);
         const after = loaded(b, p);
-        if (after.name === target.name || count(b, args.item) >= before) fail('PLACE_NOT_VERIFIED', 'Placement was not confirmed by block and inventory changes.');
+        if (after.name === target.name || count(b, args.item) >= before || planting && after.name !== planting.result_block) {
+          fail('PLACE_NOT_VERIFIED', 'Placement was not confirmed by expected block and inventory changes.');
+        }
         return { ...describeBlock(after), inventory_before: before, inventory_after: count(b, args.item) };
       }
       if (name === 'dig') {
@@ -204,6 +216,22 @@ async function executeTool (bot, tool, options = {}) {
           const item = dataFor(b).itemsByName[args.item];
           if (!item) fail('UNKNOWN_ITEM', 'Unknown item: ' + args.item);
           const quantity = amount(args.count);
+          // Supplied by the controller from immutable goal baselines, not a
+          // task-specific plan. Recheck against this freshly opened window.
+          const constraint = tool.container_constraint;
+          if (constraint) {
+            const cp = position(constraint.position);
+            if (!cp.equals(block.position) || constraint.item !== args.item ||
+                !['minimum', 'maximum'].some(key => Number.isInteger(constraint[key]) && constraint[key] >= 0)) {
+              fail('INVALID_CONSTRAINT', 'Transfer constraint does not match the observed container/item.');
+            }
+            const projected = (before[args.item] || 0) + (name === 'deposit' ? quantity : -quantity);
+            if (constraint.minimum != null && projected < constraint.minimum ||
+                constraint.maximum != null && projected > constraint.maximum) {
+              fail('GOAL_QUANTITY_LIMIT', 'Transfer would overshoot the fixed goal; choose the remaining quantity.',
+                { before, projected, constraint });
+            }
+          }
           const playerBefore = totals(window.slots.slice(window.inventoryStart, window.inventoryEnd));
           await window[name](item.id, null, quantity);
           window.close();

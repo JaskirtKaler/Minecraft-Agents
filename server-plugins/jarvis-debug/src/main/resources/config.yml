@@ -1,6 +1,8 @@
 # Root start.sh supplies the bot username from .env as a Java system property.
 # This fallback applies when launching the Minecraft server manually.
 bot-username: AI_Agent
+# Human players who can inspect inventory and, in training mode, use /time and /weather.
+# The configured bot is always excluded from the training command grants.
 allowed-viewers:
   - Pilot6117
 refresh-ticks: 10

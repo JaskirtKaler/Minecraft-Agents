@@ -31,7 +31,8 @@ class ModelToolAgentTests(unittest.IsolatedAsyncioTestCase):
                                  send_chat=AsyncMock(), latest_state=state)
         responses = [json.dumps(d) if isinstance(d, dict) else d for d in decisions]
         client = SimpleNamespace(generate_response=AsyncMock(side_effect=responses))
-        settings = SimpleNamespace(learning_dir=directory.name, model_step_timeout=1, agent_max_steps=steps, agent_timeout=3)
+        settings = SimpleNamespace(learning_dir=directory.name, model_step_timeout=1, agent_max_steps=steps, agent_timeout=3,
+                                   goal_review_enabled=False)
         agent = ModelToolAgent(bridge, client, settings=settings, library=library)
         self.addAsyncCleanup(agent.aclose)
         return agent, bridge, client, state
@@ -182,7 +183,7 @@ class ModelToolAgentTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_goals_cannot_be_weakened_after_failure(self):
         declare = self.craft_decision()
-        declare['action'] = {'name': 'recipes', 'args': {'item': 'wooden_sword'}}
+        declare['action'] = {'name': 'equip', 'args': {'item': 'wooden_sword'}}
         agent, bridge, _, _ = self.fixture([declare, self.craft_decision(1), self.craft_decision(), {'lesson': 'Meet the full requested quantity.'}])
         result = await agent.run('craft 2 swords')
         self.assertTrue(result['verified'])
@@ -190,7 +191,7 @@ class ModelToolAgentTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_new_prerequisite_does_not_block_action_or_replace_final_criteria(self):
         declare = self.craft_decision()
-        declare['action'] = {'name': 'recipes', 'args': {'item': 'wooden_sword'}}
+        declare['action'] = {'name': 'equip', 'args': {'item': 'wooden_sword'}}
         next_action = self.craft_decision()
         next_action['goals'].append({'kind': 'inventory_gain', 'item': 'crafting_table', 'count': 1})
         agent, bridge, _, _ = self.fixture([declare, next_action, {'lesson': 'Use prerequisites without changing the objective.'}])

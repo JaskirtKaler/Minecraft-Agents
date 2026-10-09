@@ -321,7 +321,10 @@ echo "READY — join Minecraft Java at 127.0.0.1:$MC_PORT"
 echo "Agent: $BOT_USERNAME. In game chat: mine 3 oak logs and drop them to me"
 echo "Memory recall: memory"
 echo "Inventory: chat 'inventory', /jarvisinventory, or right-click $BOT_USERNAME (read-only)."
-if [ "${MC_TRAINING_MODE:-true}" = true ]; then echo "Development mode: Peaceful difficulty + full food, still Survival crafting/mining."; fi
+if [ "${MC_TRAINING_MODE:-true}" = true ]; then
+    echo "Development mode: Peaceful difficulty + full food, still Survival crafting/mining."
+    echo "Configured debug players can use /time set day and /weather clear."
+fi
 echo "Keep this terminal open. Ctrl+C stops the agent and saves/stops the server."
 echo
 while true; do

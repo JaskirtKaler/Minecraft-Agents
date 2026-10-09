@@ -261,13 +261,13 @@ async function mineLogs (bot, { item, count, maxDistance: searchDistance, collec
 
       try {
         progress(`walking to ${item}; holding ${countItem(bot, item)}/${targetAfter}`);
-        // GoalGetToBlock ends adjacent to the solid log; GoalBlock would ask
-        // pathfinder to stand inside the log and is therefore not appropriate.
-        await gotoWithTimeout(bot, new goals.GoalGetToBlock(
-          block.position.x,
-          block.position.y,
-          block.position.z
-        ), Math.max(30000, searchDistance * 750));
+        // GetToBlock alone also accepts standing ON the log. Approach beside
+        // it so the underfoot-dig safeguard never has to reject that route.
+        const p = block.position;
+        await gotoWithTimeout(bot, new goals.GoalCompositeAll([
+          new goals.GoalGetToBlock(p.x, p.y, p.z),
+          new goals.GoalInvert(new goals.GoalXZ(p.x, p.z))
+        ]), Math.max(30000, searchDistance * 750));
 
         if (!bot.canDigBlock(block)) {
           attemptErrors.push(`${positionKey(block.position)} is not reachable for digging`);
@@ -298,6 +298,8 @@ async function mineLogs (bot, { item, count, maxDistance: searchDistance, collec
       } catch (error) {
         if (['PICKUP_NOT_VERIFIED', 'TASK_TIMEOUT', 'CANCELLED'].includes(error.code)) throw error;
         attemptErrors.push(`${positionKey(block.position)}: ${error.message || error}`);
+        console.warn('[Log Route Rejected]', JSON.stringify({ position: block.position,
+          code: error.code || 'ROUTE_FAILED', reason: error.message || String(error) }));
       }
     }
 
@@ -546,7 +548,8 @@ async function executeTask (bot, task, options = {}) {
       return { message: mined.message + ' ' + deposited.message, data: {
         item: parsed.item, requested_count: parsed.count, mine: mined.data, deposit: deposited.data
       } };
-    }, { timeoutMs: options.timeoutMs || MAX_TASK_DURATION_MS });
+    }, { timeoutMs: options.timeoutMs ?? MAX_TASK_DURATION_MS, idleTimeoutMs: options.idleTimeoutMs ?? null,
+      progressValue: ['mine_logs', 'mine_resource'].includes(parsed.name) ? b => countItem(b, parsed.item) : null });
 
     return {
       success: true,

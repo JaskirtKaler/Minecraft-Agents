@@ -21,6 +21,7 @@ import org.bukkit.plugin.java.JavaPlugin;
 /** Local debugging only: inspect the configured bot, never arbitrary players. */
 public final class JarvisDebugPlugin extends JavaPlugin implements Listener {
     private String botUsername;
+    private TrainingCommandPermissions trainingCommands;
 
     @Override
     public void onEnable() {
@@ -35,6 +36,10 @@ public final class JarvisDebugPlugin extends JavaPlugin implements Listener {
         boolean training = Boolean.parseBoolean(System.getProperty("jarvis.training.mode",
             Boolean.toString(getConfig().getBoolean("training-mode", true))));
         if (training) {
+            trainingCommands = new TrainingCommandPermissions(this, botUsername,
+                getConfig().getStringList("allowed-viewers"));
+            getServer().getPluginManager().registerEvents(trainingCommands, this);
+            getServer().getOnlinePlayers().forEach(trainingCommands::grant);
             var assistance = new TrainingModeListener(true);
             getServer().getPluginManager().registerEvents(assistance, this);
             getServer().getWorlds().forEach(assistance::initializeWorld);
@@ -42,7 +47,7 @@ public final class JarvisDebugPlugin extends JavaPlugin implements Listener {
             // Also covers respawns and food state restored by other plugins.
             getServer().getScheduler().runTaskTimer(this,
                 () -> getServer().getOnlinePlayers().forEach(assistance::maintainPlayer), 20L, 100L);
-            getLogger().info("Training mode: Peaceful worlds, full food; Survival mechanics unchanged.");
+            getLogger().info("Training mode: Peaceful worlds, full food, time/weather commands for configured viewers.");
         }
     }
 
@@ -145,6 +150,7 @@ public final class JarvisDebugPlugin extends JavaPlugin implements Listener {
 
     @Override
     public void onDisable() {
+        if (trainingCommands != null) trainingCommands.close();
         for (Player viewer : getServer().getOnlinePlayers()) {
             if (ReadOnlyInventoryListener.holder(viewer.getOpenInventory()) != null) viewer.closeInventory();
         }

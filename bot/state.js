@@ -4,6 +4,8 @@
  */
 
 const { randomUUID } = require('crypto');
+const { farmingTargets, plantingSites } = require('./grounding');
+const { plantingRule } = require('./knowledge');
 
 const KEY_BLOCK_TYPES = new Set([
     'oak_log', 'birch_log', 'spruce_log', 'jungle_log', 'acacia_log', 'dark_oak_log', 'mangrove_log', 'cherry_log',
@@ -11,7 +13,7 @@ const KEY_BLOCK_TYPES = new Set([
     'crafting_table', 'furnace', 'blast_furnace', 'smoker', 'chest', 'trapped_chest', 'ender_chest',
     'nether_portal', 'end_portal',
     'coal_ore', 'deepslate_coal_ore', 'iron_ore', 'deepslate_iron_ore', 'gold_ore', 'diamond_ore',
-    'water', 'lava', 'wheat', 'carrots', 'potatoes', 'stone', 'cobblestone'
+    'water', 'lava', 'farmland', 'wheat', 'carrots', 'potatoes', 'beetroots', 'stone', 'cobblestone'
 ]);
 
 // Kept outside the Mineflayer object so state serialization does not expose
@@ -227,12 +229,15 @@ function getBotState(bot, options = {}) {
         stats,
         equipment,
         inventory: inventoryItems,
+        farmingTargets: farmingTargets(bot, blockRadius),
+        plantingTargets: bot.version ? inventoryItems.filter(item => plantingRule(bot, item.name)?.category === 'sapling')
+            .slice(0, 2).map(item => ({ item: item.name, ...plantingSites(bot, item.name, Math.min(32, Math.max(1, blockRadius))) })) : [],
         standingOn: blockBelow ? blockBelow.name : 'unknown',
         gameKnowledge: {
             source: 'minecraft-data for ' + bot.version,
             cobblestone: 'Mine exposed stone/cobblestone with a harvest-capable pickaxe without Silk Touch; verify pickup.',
             navigation: 'Walking cannot dig. Bounded controlled uphill staircase escape may clear terrain; no towers or mining underfoot.',
-            wheat: 'Inspect crop age before harvest. Explicit dig/place/use_on_block tools can be composed for farming; verify results.'
+            wheat: 'Plant wheat_seeds to create a wheat block in the empty cell directly above farmland. Soil and crop have different positions. Inspect age before harvest; do not remove existing crops unless requested.'
         },
         nearbyEntities: topEntities,
         nearbyKeyBlocks: nearbyBlocksSummary,

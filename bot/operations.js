@@ -44,9 +44,30 @@ async function pacedCraft (bot, craft, args, lease) {
   finally { if (bot.clickWindow === paced) bot.clickWindow = original; }
 }
 
-async function runOperation (bot, work, { timeoutMs = 180000 } = {}) {
+async function runOperation (bot, work, { timeoutMs = 180000, idleTimeoutMs = null,
+  progressValue = null, progressIntervalMs = 250 } = {}) {
   if (running.has(bot)) throw operationError('BUSY', 'A previous operation is still settling; please wait.');
-  const lease = { active: true, windows: new Set(), reason: null };
+  const started = Date.now();
+  const lease = { active: true, windows: new Set(), reason: null, started,
+    id: require('crypto').randomUUID(), timeoutMs, idleTimeoutMs, lastProgress: started, route: null };
+  let bestValue = progressValue ? progressValue(bot) : null;
+  lease.observeProgress = () => {
+    if (!lease.active) return;
+    if (progressValue) {
+      const value = progressValue(bot);
+      if (Number.isFinite(value) && value > bestValue) {
+        bestValue = value;
+        lease.lastProgress = Date.now();
+      }
+    }
+    if (lease.route) {
+      const score = lease.route.goal.heuristic(bot.entity.position);
+      if (Number.isFinite(score) && score < lease.route.best - 0.1) {
+        lease.route.best = score;
+        lease.lastProgress = Date.now();
+      }
+    }
+  };
   lease.closeWindow = window => {
     if (!lease.windows.delete(window)) return;
     // Closing a stale preflight window can copy its old inventory over the
@@ -58,14 +79,21 @@ async function runOperation (bot, work, { timeoutMs = 180000 } = {}) {
   let rejectStop;
   const stopped = new Promise((_, reject) => { rejectStop = reject; });
   lease.check = () => {
+    lease.observeProgress();
     if (lease.active && Date.now() >= deadline) {
       lease.stop(operationError('TASK_TIMEOUT', 'Operation deadline reached; partial progress is not completion.'));
+    }
+    if (lease.active && idleTimeoutMs != null && Date.now() - lease.lastProgress >= idleTimeoutMs) {
+      lease.stop(operationError('TASK_TIMEOUT', 'No observed inventory gain or advance toward the walking target within the inactivity limit.'));
     }
     if (!lease.active) throw lease.reason || operationError('CANCELLED', 'Operation is no longer active.');
   };
   lease.stop = (reason) => {
     if (!lease.active) return;
     lease.reason = reason;
+    reason.data = { ...(reason.data || {}), operation_id: lease.id, timing: {
+      elapsed_ms: Date.now() - started, hard_limit_ms: timeoutMs, idle_limit_ms: idleTimeoutMs,
+      idle_ms: Date.now() - lease.lastProgress } };
     lease.active = false; // Revoke before stopping outstanding movement/digging.
     stopMotion(bot);
     for (const window of [...lease.windows]) lease.closeWindow(window);
@@ -89,6 +117,11 @@ async function runOperation (bot, work, { timeoutMs = 180000 } = {}) {
           args[0].allow1by1towers = false;
           args[0].scafoldingBlocks = [];
         }
+        let route;
+        if (kind === 'pathfinder' && key === 'goto' && typeof args[0]?.heuristic === 'function') {
+          route = { goal: args[0], best: args[0].heuristic(bot.entity.position) };
+          lease.route = route;
+        }
         const result = kind === 'bot' && key === 'craft' && bot.clickWindow && bot.waitForTicks &&
           bot.supportFeature?.('stateIdUsed')
           ? pacedCraft(bot, value, args, lease) : value.apply(target, args);
@@ -101,7 +134,7 @@ async function runOperation (bot, work, { timeoutMs = 180000 } = {}) {
           lease.check();
           return kind === 'bot' && ['openChest', 'openContainer', 'openBlock'].includes(key)
             ? facade(returned, 'window') : returned;
-        });
+        }).finally(() => { if (route && lease.route === route) lease.route = null; });
       };
     },
     set () { throw operationError('UNSUPPORTED_API', 'Operation code may not replace bot properties.'); }
@@ -119,6 +152,9 @@ async function runOperation (bot, work, { timeoutMs = 180000 } = {}) {
   const timer = setTimeout(() => lease.stop(operationError(
     'TASK_TIMEOUT', 'Operation timed out; movement stopped. Any partial outcome needs verification.'
   )), timeoutMs);
+  const idleTimer = idleTimeoutMs == null ? null : setInterval(() => {
+    try { lease.check(); } catch (error) { lease.stop(error); }
+  }, Math.min(progressIntervalMs, idleTimeoutMs));
   try {
     return await Promise.race([execution, stopped]);
   } catch (error) {
@@ -126,6 +162,7 @@ async function runOperation (bot, work, { timeoutMs = 180000 } = {}) {
     throw error;
   } finally {
     clearTimeout(timer);
+    if (idleTimer) clearInterval(idleTimer);
   }
 }
 
@@ -136,4 +173,10 @@ function cancelOperation (bot) {
   return true;
 }
 
-module.exports = { runOperation, cancelOperation, assertDigSafety };
+function operationStatus (bot) {
+  const lease = running.get(bot);
+  return lease ? { busy: true, active: lease.active, operation_id: lease.id,
+    elapsed_ms: Date.now() - lease.started, idle_ms: Date.now() - lease.lastProgress,
+    hard_limit_ms: lease.timeoutMs, idle_limit_ms: lease.idleTimeoutMs } : { busy: false, active: false };
+}
+module.exports = { runOperation, cancelOperation, assertDigSafety, operationStatus };

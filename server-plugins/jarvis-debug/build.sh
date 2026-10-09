@@ -24,6 +24,7 @@ SOURCES=(
     "$PLUGIN_DIR/src/main/java/dev/minecraftagents/debug/InventoryLayout.java"
     "$PLUGIN_DIR/src/main/java/dev/minecraftagents/debug/ReadOnlyInventoryListener.java"
     "$PLUGIN_DIR/src/main/java/dev/minecraftagents/debug/TrainingModeListener.java"
+    "$PLUGIN_DIR/src/main/java/dev/minecraftagents/debug/TrainingCommandPermissions.java"
     "$PLUGIN_DIR/src/main/java/dev/minecraftagents/debug/JarvisDebugPlugin.java"
 )
 "$JDK_BIN/javac" --release 17 -proc:none -encoding UTF-8 -classpath "$CLASSPATH" -d "$BUILD_DIR/classes" "${SOURCES[@]}"

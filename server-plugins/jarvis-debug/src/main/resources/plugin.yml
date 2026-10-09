@@ -2,7 +2,7 @@ name: JarvisDebug
 version: 0.1.0
 main: dev.minecraftagents.debug.JarvisDebugPlugin
 api-version: '1.20'
-description: Read-only local debugging inventory for the configured Minecraft agent.
+description: Local agent inventory inspection and optional training assistance.
 commands:
   jarvisinventory:
     description: Inspect Jarvis's live inventory without transferring any items.

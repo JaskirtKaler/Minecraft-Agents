@@ -29,3 +29,19 @@ server-plugins/jarvis-debug/build/
 server/plugins/JarvisDebug.jar
 server/plugins/JarvisDebug/
 server-plugins/practice-oracle/build/
+
+# Generated Purpur runtime. Existing tracked files need scripts/untrack-runtime.sh.
+# Keep source-controlled server configuration and pinned bootstrap jars separate.
+server/cache/
+server/libraries/
+server/logs/
+server/versions/
+server/world/
+server/world_nether/
+server/world_the_end/
+server/crash-reports/
+
+# Local policy runs and weights belong under ignored data/, not source.
+*.egg-info/
+build/
+dist/
