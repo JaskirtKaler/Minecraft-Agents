@@ -80,7 +80,13 @@ async function runGroundingTests () {
   let walkingGoal;
   const walkingBot = { ...bot, entity: { position: new Vec3(0, 65, 0) },
     blockAt: p => ({ name: 'air', position: p }),
-    pathfinder: { goto: async goal => { walkingGoal = goal; } } };
+    pathfinder: { goto: async goal => {
+      walkingGoal = goal;
+      const nodes = [new Vec3(5, 65, 4), new Vec3(6, 65, 4), new Vec3(5, 65, 5)];
+      const reached = nodes.find(node => goal.isEnd(node));
+      assert(reached, 'Test route needs a node that satisfies the requested goal.');
+      walkingBot.entity.position = reached;
+    } } };
   const walkArgs = { position: { x: 5, y: 65, z: 4 }, adjacent: true };
   assert.equal((await executeTool(walkingBot, { name: 'walk_to', args: walkArgs })).success, true);
   assert.equal(walkingGoal.isEnd({ x: 5, y: 65, z: 4 }), false);

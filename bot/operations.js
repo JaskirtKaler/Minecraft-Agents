@@ -45,7 +45,7 @@ async function pacedCraft (bot, craft, args, lease) {
 }
 
 async function runOperation (bot, work, { timeoutMs = 180000, idleTimeoutMs = null,
-  progressValue = null, progressIntervalMs = 250 } = {}) {
+  progressValue = null, progressIntervalMs = 250, beforeDig = null } = {}) {
   if (running.has(bot)) throw operationError('BUSY', 'A previous operation is still settling; please wait.');
   const started = Date.now();
   const lease = { active: true, windows: new Set(), reason: null, started,
@@ -111,7 +111,10 @@ async function runOperation (bot, work, { timeoutMs = 180000, idleTimeoutMs = nu
       return (...args) => {
         if (kind === 'window' && key === 'close') return lease.closeWindow(target);
         lease.check();
-        if (kind === 'bot' && key === 'dig') assertDigSafety(bot, args[0]);
+        if (kind === 'bot' && key === 'dig') {
+          assertDigSafety(bot, args[0]);
+          beforeDig?.(bot, args[0]);
+        }
         if (kind === 'pathfinder' && key === 'setMovements') {
           args[0].canDig = false;
           args[0].allow1by1towers = false;

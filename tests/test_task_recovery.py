@@ -181,6 +181,26 @@ class RecoveryTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(any('overshoot' in e['planner_error'] for e in result['data']['planner_errors']))
         self.assertIsNone(result['data']['in_flight_action'])
 
+    async def test_rejected_draft_is_not_described_as_accepted_or_fixed(self):
+        p = {'x': 2, 'y': 64, 'z': 3}
+        bad = {'type': 'act', 'goals': [{'kind': 'container_loss', 'item': 'oak_sapling', 'count': 1, 'position': p}],
+               'actions': [{'name': 'withdraw', 'args': {'item': 'oak_sapling', 'count': 1, 'position': p}}]}
+        requirements = [{'outcome': 'container_remove', 'item': 'oak_sapling', 'count': 3, 'comparison': 'exact'}]
+        agent, bridge, client, state = self.fixture([bad, {'requirements': requirements},
+            {'type': 'blocked', 'message': 'Must submit corrected final source count.'}], True)
+        agent.settings.goal_quantity_check_enabled = True
+        state['inventory'] = [{'name': 'oak_sapling', 'count': 2}]
+        bridge.execute_tool.return_value = {'success': True, 'data': {'items': {'oak_sapling': 7}}}
+        result = await agent.run('Take exactly three saplings from the chest')
+        self.assertFalse(result['verified'])
+        prompt = json.loads(client.generate_response.call_args_list[2].args[0][1]['content'])
+        self.assertEqual(prompt['goals'], [])
+        self.assertEqual(prompt['requested_quantities'], requirements)
+        self.assertIn('No goals have been accepted', prompt['next_response'])
+        self.assertIn('resubmit a COMPLETE goals array', prompt['next_response'])
+        self.assertTrue(all(call.args[0]['name'] == 'container' for call in bridge.execute_tool.call_args_list))
+        self.assertIsNone(result['data']['in_flight_action'])
+
     async def test_delivery_from_existing_stock_does_not_prove_new_collection(self):
         p = {'x': 2, 'y': 64, 'z': 3}
         goal = {'kind': 'container_gain', 'item': 'oak_log', 'count': 2, 'position': p}

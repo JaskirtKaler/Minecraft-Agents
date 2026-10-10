@@ -29,6 +29,24 @@ function footPosition (bot) {
   return new Vec3(Math.floor(p.x), Math.floor(p.y), Math.floor(p.z));
 }
 
+function isFullCube (shape) {
+  return Array.isArray(shape) && shape.length === 6 &&
+    shape[0] <= 0 && shape[1] <= 0 && shape[2] <= 0 &&
+    shape[3] >= 1 && shape[4] >= 1 && shape[5] >= 1;
+}
+
+function hasNonFullSupport (bot, node) {
+  if (typeof bot.blockAt !== 'function') return false;
+  // A bottom slab occupies the floored feet cell; a top slab can be directly
+  // below it.  Neither is a full cube, which is the narrow condition behind
+  // pathfinder's final-node +Y exception.
+  return [node, node.offset(0, -1, 0)].some(position => {
+    const block = bot.blockAt(position);
+    return block?.boundingBox === 'block' && Array.isArray(block.shapes) && block.shapes.length > 0 &&
+      !block.shapes.some(isFullCube);
+  });
+}
+
 async function walkTo (bot, goal, { timeoutMs = 45000, stalledMs = 15000, intervalMs = 500 } = {}) {
   const started = Date.now();
   let advancedAt = started;
@@ -61,7 +79,32 @@ async function walkTo (bot, goal, { timeoutMs = 45000, stalledMs = 15000, interv
     }, intervalMs);
   });
   try {
-    return await Promise.race([bot.pathfinder.goto(goal), watchdog]);
+    await Promise.race([bot.pathfinder.goto(goal), watchdog]);
+
+    // `pathfinder.goto()` can resolve when its internal no-path listener sees
+    // an empty path, even though it never emitted `goal_reached` or moved the
+    // bot.  A pathfinder goal is evaluated against an integer navigation node,
+    // so verify it using the bot's floored feet position rather than the
+    // fractional entity position (which is normal while standing or moving).
+    // On its final path node pathfinder also accepts one block above that
+    // node for a non-full support such as a slab. Mirror that discrete
+    // predicate only when current collision geometry establishes the narrow
+    // slab/non-full-support case, not merely because a goal one Y higher fits.
+    const actual = footPosition(bot);
+    const reachedAtFeet = typeof goal?.isEnd === 'function' && goal.isEnd(actual);
+    const reachedOnRaisedNode = hasNonFullSupport(bot, actual) && typeof goal?.isEnd === 'function' &&
+      goal.isEnd(actual.offset(0, 1, 0));
+    if (!reachedAtFeet && !reachedOnRaisedNode) {
+      fail('GOAL_NOT_REACHED', 'Pathfinder stopped before reaching the requested navigation goal.', {
+        actual: { x: actual.x, y: actual.y, z: actual.z },
+        goal: {
+          type: goal?.constructor?.name,
+          x: goal?.x,
+          y: goal?.y,
+          z: goal?.z
+        }
+      });
+    }
   } finally {
     clearInterval(timer);
   }

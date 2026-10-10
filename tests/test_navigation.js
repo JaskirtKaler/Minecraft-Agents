@@ -5,10 +5,11 @@ const Block = require('../bot/node_modules/prismarine-block')('1.20.1');
 const { goals, Movements } = require('../bot/node_modules/mineflayer-pathfinder');
 const Move = require('../bot/node_modules/mineflayer-pathfinder/lib/move');
 const { executeTask } = require('../bot/skills');
-const { cancelOperation } = require('../bot/operations');
+const { cancelOperation, operationStatus } = require('../bot/operations');
 const { planStaircase, walkTo, LIMITS } = require('../bot/navigation');
 
-function pitFixture ({ digDelay = 0, ceiling = 67, blocked = false, tool = true } = {}) {
+function pitFixture ({ digDelay = 0, digBarrier = null, onDigStarted = null,
+  ceiling = 67, blocked = false, tool = true } = {}) {
   const edits = new Map();
   const key = p => `${p.x},${p.y},${p.z}`;
   const set = (p, name) => edits.set(key(p), name);
@@ -42,6 +43,8 @@ function pitFixture ({ digDelay = 0, ceiling = 67, blocked = false, tool = true 
     async unequip () {},
     async dig (b) {
       calls.digs.push({ position: b.position.clone(), feet: bot.entity.position.clone(), block: b.name });
+      onDigStarted?.();
+      if (digBarrier) await digBarrier;
       if (digDelay) await new Promise(resolve => setTimeout(resolve, digDelay));
       set(b.position, 'air');
       if (b.name === 'stone') inventory[0].count++;
@@ -126,6 +129,58 @@ async function runNavigationTests () {
   }), error => error.code === 'NO_NAVIGATION_PROGRESS');
   assert.equal(stopped, 1, 'Circling should be stopped without waiting for the full task deadline.');
 
+  // mineflayer-pathfinder 2.4.5 can resolve goto() for an empty no-path result
+  // before reporting its noPath error.  A resolved promise is not proof that
+  // the bot actually reached the destination.
+  const noPathResolved = {
+    entity: { position: new Vec3(14.5, 78, 2.5) },
+    pathfinder: { goto: async () => {}, setGoal: () => {} }
+  };
+  await assert.rejects(walkTo(noPathResolved, new goals.GoalBlock(14, 74, 2), {
+    timeoutMs: 100, stalledMs: 50, intervalMs: 5
+  }), error => error.code === 'GOAL_NOT_REACHED' &&
+    error.data.actual.x === 14 && error.data.actual.y === 78 && error.data.actual.z === 2);
+
+  // Pathfinder goals evaluate integer navigation nodes.  A real arrival can
+  // leave the entity at fractional coordinates, which must floor to the goal
+  // node instead of being mistaken for a failed postcondition.
+  const fractionalArrival = {
+    entity: { position: new Vec3(0.5, 64, 0.5) },
+    pathfinder: {
+      async goto () { fractionalArrival.entity.position = new Vec3(2.8, 65.25, 3.2); },
+      setGoal: () => {}
+    }
+  };
+  await walkTo(fractionalArrival, new goals.GoalBlock(2, 65, 3), {
+    timeoutMs: 100, stalledMs: 50, intervalMs: 5
+  });
+
+  // The installed pathfinder permits its final node to be one block below a
+  // goal when the bot stands on non-full support. Preserve that documented
+  // slab convention, while requiring actual non-full collision geometry.
+  const slabArrival = {
+    entity: { position: new Vec3(0.5, 64, 0.5) },
+    blockAt: position => position.equals(new Vec3(2, 64, 3))
+      ? { boundingBox: 'block', shapes: [[0, 0, 0, 1, 0.5, 1]] }
+      : null,
+    pathfinder: {
+      async goto () { slabArrival.entity.position = new Vec3(2.8, 64.5, 3.2); },
+      setGoal: () => {}
+    }
+  };
+  await walkTo(slabArrival, new goals.GoalBlock(2, 65, 3), {
+    timeoutMs: 100, stalledMs: 50, intervalMs: 5
+  });
+
+  const fullBlockBelowGoal = {
+    entity: { position: new Vec3(2.8, 64.5, 3.2) },
+    blockAt: () => ({ boundingBox: 'block', shapes: [[0, 0, 0, 1, 1, 1]] }),
+    pathfinder: { goto: async () => {}, setGoal: () => {} }
+  };
+  await assert.rejects(walkTo(fullBlockBelowGoal, new goals.GoalBlock(2, 65, 3), {
+    timeoutMs: 100, stalledMs: 50, intervalMs: 5
+  }), error => error.code === 'GOAL_NOT_REACHED');
+
   const pit = pitFixture();
   const escaped = await executeTask(pit.bot, { name: 'escape_staircase', args: { rise: 4 } });
   assert.equal(escaped.verified, true, escaped.message);
@@ -206,12 +261,37 @@ async function runNavigationTests () {
   assert.equal(cancelled.calls.digs.length, 1, 'No next excavation after cancellation.');
   assert.equal(cancelled.calls.walks.length, 0);
 
-  const expired = pitFixture({ digDelay: 40 });
-  const timedOut = await executeTask(expired.bot, { name: 'escape_staircase', args: { rise: 4 } }, { timeoutMs: 15 });
-  assert.equal(timedOut.status, 'unknown');
-  await new Promise(resolve => setTimeout(resolve, 60));
-  assert.equal(expired.calls.digs.length, 1, 'An already-issued dig may finish, but no later excavation may begin.');
-  assert.equal(expired.calls.walks.length, 0);
+  let signalDigStarted, releaseDig;
+  const digStarted = new Promise(resolve => { signalDigStarted = resolve; });
+  const digBarrier = new Promise(resolve => { releaseDig = resolve; });
+  const expired = pitFixture({ digBarrier, onDigStarted: signalDigStarted });
+  const originalNow = Date.now;
+  let clock = originalNow();
+  const deadlineMs = 60000;
+  // Planning must not race a tiny wall-clock deadline. Start a known in-flight
+  // dig, then advance the clock past its lease deadline before letting it finish.
+  Date.now = () => clock;
+  try {
+    const expiryJob = executeTask(expired.bot, { name: 'escape_staircase', args: { rise: 4 } }, { timeoutMs: deadlineMs });
+    await Promise.race([digStarted, expiryJob.then(() => {
+      throw new Error('Expiry fixture must enter its first dig before the deadline is advanced.');
+    })]);
+    assert.equal(expired.calls.digs.length, 1);
+    assert.equal(operationStatus(expired.bot).active, true);
+    clock += deadlineMs + 1;
+    releaseDig();
+    const timedOut = await expiryJob;
+    assert.equal(timedOut.status, 'unknown');
+    assert.equal(timedOut.data.error_code, 'TASK_TIMEOUT');
+    assert(timedOut.data.timing.elapsed_ms >= deadlineMs, 'The controlled deadline must actually expire.');
+    await new Promise(resolve => setImmediate(resolve));
+    assert.equal(expired.calls.digs.length, 1, 'An already-issued dig may finish, but no later excavation may begin.');
+    assert.equal(expired.calls.walks.length, 0);
+    assert.equal(operationStatus(expired.bot).busy, false, 'Expired work settles and releases the operation slot.');
+  } finally {
+    releaseDig();
+    Date.now = originalNow;
+  }
   console.log('✓ controlled staircase escape, delivery, hazards, and cancellation tests passed');
 }
 

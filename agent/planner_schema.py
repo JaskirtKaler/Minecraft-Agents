@@ -9,6 +9,10 @@ IDENTIFIER = {"type": "string", "minLength": 1}
 COUNT = {"type": "integer", "minimum": 1, "maximum": 2304}
 POSITION = object_schema({axis: {"type": "integer"} for axis in ("x", "y", "z")}, ("x", "y", "z"))
 TOOL_COUNT = {"type": "integer", "minimum": 1, "maximum": 64}
+REGION = object_schema({"min": POSITION, "max": POSITION, "block": IDENTIFIER,
+                        "mode": {"enum": ["solid", "perimeter_xz"]}},
+                       ("min", "max", "block", "mode"))
+REGION_EXCEPTION = object_schema({"position": POSITION, "block": IDENTIFIER}, ("position", "block"))
 
 
 def tool_schema(tool_names):
@@ -18,6 +22,17 @@ def tool_schema(tool_names):
         fields, required = {}, []
         if name == 'inspect':
             fields = {'item': IDENTIFIER, 'position': POSITION}
+        elif name == 'inspect_region':
+            fields = {'min': POSITION, 'max': POSITION}
+            required = ['min', 'max']
+        elif name in {'place_batch', 'dig_batch', 'repair_batch'}:
+            fields = {'positions': {'type': 'array', 'items': POSITION, 'minItems': 1, 'maxItems': 64}}
+            required = ['positions']
+            if name == 'place_batch':
+                fields['item'] = IDENTIFIER
+                required.append('item')
+            else:
+                fields['tool'] = IDENTIFIER
         elif name == 'find_blocks':
             fields = {'names': {'type': 'array', 'items': IDENTIFIER, 'minItems': 1, 'maxItems': 16},
                       'radius': {'type': 'integer', 'minimum': 1, 'maximum': 64}}
@@ -82,6 +97,11 @@ def decision_schema(tool_names, batch_size=4, include_goals=True):
     goals += [object_schema({"kind": {"const": "block_is"}, "block": IDENTIFIER, "position": POSITION,
                             "must_change": {'type': 'boolean'}},
                             ("kind", "block", "position")),
+              object_schema({"kind": {"const": "regions_match"},
+                             "regions": {"type": "array", "items": REGION, "minItems": 1, "maxItems": 16},
+                             "exceptions": {"type": "array", "items": REGION_EXCEPTION, "maxItems": 64},
+                             "must_change": {"type": "boolean"}},
+                            ("kind", "regions", "must_change")),
               object_schema({"kind": {"const": "position_near"}, "position": POSITION,
                              "radius": {"type": "number", "exclusiveMinimum": 0, "maximum": 8}},
                             ("kind", "position"))]

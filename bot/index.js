@@ -27,6 +27,7 @@ const { cancelOperation, operationStatus } = require('./operations');
 const { describeSubject } = require('./knowledge');
 const { getObservation } = require('./observations');
 const { navigationFrame, executeNavigationStep } = require('./rl_navigation');
+const { createConstructionController } = require('./construction_controller');
 
 // Configuration from environment or defaults
 const HOST = process.env.MC_HOST || 'localhost';
@@ -51,6 +52,7 @@ if (VERSION) {
 
 const bot = mineflayer.createBot(botOptions);
 bot.loadPlugin(pathfinder);
+const constructionController = createConstructionController(bot);
 
 let mcData = null;
 let wsClient = null;
@@ -172,6 +174,7 @@ function handleBlockUpdate(oldBlock, newBlock) {
 
 // Setup Pathfinder movements on spawn
 bot.on('spawn', () => {
+    constructionController.clear();
     console.log(`[Mineflayer] Bot successfully spawned in world as '${bot.username}'!`);
     // A respawn is a new observation session even if it occurs in the same
     // world/dimension. This happens before any state or world_join event.
@@ -255,6 +258,7 @@ bot.on('error', (err) => {
 });
 
 bot.on('death', () => {
+    constructionController.clear();
     cancelOperation(bot);
     console.warn(`[Mineflayer] Bot died in game. Automatically respawning...`);
     botSpawned = false;
@@ -279,6 +283,7 @@ bot.on('death', () => {
 });
 
 bot.on('end', (reason) => {
+    constructionController.clear();
     cancelOperation(bot);
     console.warn(`[Mineflayer] Bot connection ended: ${reason || 'unknown reason'}`);
     botSpawned = false;
@@ -324,6 +329,7 @@ function connectToOrchestrator() {
     client.on('close', () => {
         if (wsClient !== client) return;
         cancelOperation(bot);
+        constructionController.clear();
         console.warn(`[WebSocket Bridge] Connection lost to Orchestrator. Will retry in 5s...`);
         wsClient = null;
         clearStateUpdateTimer();
@@ -356,6 +362,19 @@ async function handleOrchestratorMessage(message) {
     const { type, id, code, text, task, timeoutMs } = message;
 
     switch (type) {
+        case 'set_construction_contract':
+        case 'get_construction_status':
+            try {
+                if (!isBotSpawned()) throw new Error('Bot is not spawned; no construction authority.');
+                const data = type === 'set_construction_contract'
+                    ? constructionController.set(message.contract)
+                    : constructionController.facts(message.constructionTaskId);
+                sendToOrchestrator({ type: 'construction_response', id, data });
+            } catch (error) {
+                sendToOrchestrator({ type: 'construction_response', id,
+                    error: { code: error.code || 'INVALID_CONSTRUCTION_CONTRACT', message: error.message } });
+            }
+            break;
         case 'get_navigation_frame':
             try {
                 sendToOrchestrator({ type: 'navigation_response', id, data: navigationFrame(bot) });
@@ -376,14 +395,22 @@ async function handleOrchestratorMessage(message) {
                 } });
                 break;
             }
-            const result = await executeTool(bot, message.tool, { onProgress: phase => {
-                sendToOrchestrator({ type: 'event', event: 'task_progress', data: { id, phase } });
-            } });
+            let result;
+            try {
+                const constructionContext = constructionController.current(message.constructionTaskId);
+                result = await executeTool(bot, message.tool, { constructionContext, onProgress: phase => {
+                    sendToOrchestrator({ type: 'event', event: 'task_progress', data: { id, phase } });
+                } });
+            } catch (error) {
+                result = { success: false, verified: false, status: 'failed', message: error.message,
+                    data: { error_code: error.code || 'CONSTRUCTION_AUTHORITY_FAILED' } };
+            }
             sendToOrchestrator({ type: 'execution_result', id, result, currentState: getBotState(bot) });
             break;
         }
         case 'cancel_task':
             cancelOperation(bot);
+            constructionController.clear();
             break;
         case 'get_operation_status':
             sendToOrchestrator({ type: 'operation_status', id, data: operationStatus(bot) });
@@ -409,6 +436,13 @@ async function handleOrchestratorMessage(message) {
             break;
 
         case 'execute_code':
+            try { constructionController.assertLegacyAllowed(); } catch (error) {
+                sendToOrchestrator({ type: 'execution_result', id, result: {
+                    success: false, verified: false, status: 'failed', message: error.message,
+                    data: { error_code: error.code }
+                } });
+                break;
+            }
             if (process.env.ALLOW_EXPERIMENTAL_CODE !== 'true') {
                 sendToOrchestrator({ type: 'execution_result', id, result: {
                     success: false, verified: false, status: 'failed',
@@ -438,6 +472,13 @@ async function handleOrchestratorMessage(message) {
             break;
 
         case 'execute_task': {
+            try { constructionController.assertLegacyAllowed(); } catch (error) {
+                sendToOrchestrator({ type: 'execution_result', id, result: {
+                    success: false, verified: false, status: 'failed', message: error.message,
+                    data: { error_code: error.code }
+                } });
+                break;
+            }
             if (!isBotSpawned()) {
                 sendToOrchestrator({ type: 'execution_result', id, result: {
                     success: false, verified: false, message: 'The bot is not spawned; wait for it to rejoin.'

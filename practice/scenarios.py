@@ -28,7 +28,10 @@ SCENARIOS = [
     Scenario("blocked_stone", "get 2 cobblestone", error_code="NO_SAFE_RESOURCE", no_actions=True),
     Scenario("unsupported_batch", "get 2 oak logs and 3 wheat and put them in the chest", no_actions=True, unsupported=True),
 ]
-OPTIONAL_SCENARIOS = [Scenario("staircase", "mine a staircase up 3 blocks", minimum_y=67)]
+OPTIONAL_SCENARIOS = [
+    Scenario("staircase", "mine a staircase up 3 blocks", minimum_y=67),
+    Scenario("overhead_logs", "get 3 oak logs and put them in the chest", {"oak_log": 3}, {"oak_log": 0}),
+]
 
 
 def evaluate(scenario: Scenario, before: dict, after: dict, result: dict, route: dict) -> list[str]:

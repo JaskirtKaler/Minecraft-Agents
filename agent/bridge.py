@@ -22,6 +22,7 @@ class MineflayerBridge:
         self.active_client: Optional[WebSocketServerProtocol] = None
         self.pending_requests: Dict[str, asyncio.Future] = {}
         self.latest_state: Dict[str, Any] = {}
+        self._construction_task_id = None
         self.event_callbacks: list[Callable[[Dict[str, Any]], None]] = []
         self.state_callbacks: list[Callable[[Dict[str, Any]], None]] = []
 
@@ -57,6 +58,7 @@ class MineflayerBridge:
         finally:
             if self.active_client is websocket:
                 self.active_client = None
+                self._construction_task_id = None
                 for future in self.pending_requests.values():
                     if not future.done():
                         future.set_exception(ConnectionError("Mineflayer bot disconnected during request."))
@@ -71,7 +73,7 @@ class MineflayerBridge:
             self._update_state(message.get("data", {}))
             logger.debug("Received background state update from bot.")
 
-        elif msg_type in {"observation_response", "navigation_response"}:
+        elif msg_type in {"observation_response", "navigation_response", "construction_response"}:
             future = self.pending_requests.pop(msg_id, None)
             if future and not future.done():
                 if message.get('error'):
@@ -168,7 +170,25 @@ class MineflayerBridge:
         from agent.tool_timing import tool_timeout, POLICY
         if timeout is None:
             timeout = tool_timeout(tool) + POLICY['rpcGraceMs'] / 1000
-        return await self._request({"type": "execute_tool", "tool": tool}, timeout=timeout)
+        # Controller metadata is separate from model-controlled tool args.
+        return await self._request({"type": "execute_tool", "tool": tool,
+                                    "constructionTaskId": self._construction_task_id}, timeout=timeout)
+
+    async def set_construction_contract(self, contract):
+        """Install/clear a trusted frozen outcome, never a model-callable tool."""
+        # Forget the token before a revocation request: a failed/disconnected
+        # clear must never let the next tool reuse stale repair authority.
+        self._construction_task_id = None
+        ack = await self._request({'type': 'set_construction_contract', 'contract': contract}, timeout=10)
+        if contract is not None:
+            if ack.get('active') is not True or ack.get('task_id') != contract['task_id']:
+                raise RuntimeError('Construction contract was not acknowledged; no repair authority granted.')
+            self._construction_task_id = contract['task_id']
+        return ack
+
+    async def construction_status(self):
+        return await self._request({'type': 'get_construction_status',
+                                    'constructionTaskId': self._construction_task_id}, timeout=10)
 
     async def wait_for_operation_idle(self, operation_id=None):
         """Passive handshake: never retry an unsettled or unrelated operation."""
@@ -185,8 +205,14 @@ class MineflayerBridge:
                 await asyncio.sleep(.25)
 
     async def cancel_task(self):
+        self._construction_task_id = None
         if self.active_client:
-            await self.active_client.send(json.dumps({"type": "cancel_task"}))
+            try:
+                await self.active_client.send(json.dumps({"type": "cancel_task"}))
+            except Exception:
+                # Disconnection already revokes the Node lease. Never lose
+                # the caller's partial trace by masking its original failure.
+                logger.warning('Could not send cancellation on the closing bridge.', exc_info=True)
 
     async def _request(self, payload: Dict[str, Any], timeout: float) -> Dict[str, Any]:
         """Send one correlated request and always discard its future on timeout."""

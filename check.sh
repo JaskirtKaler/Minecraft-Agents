@@ -27,6 +27,9 @@ echo "Python contracts"
 echo "Mineflayer tool contracts"
 npm test --prefix bot
 node tests/test_grounding.js
+node tests/test_region_inspection.js
+node tests/test_construction.js
+node tests/test_construction_controller.js
 node tests/test_operation_progress.js
 echo "Shell and JavaScript syntax"
 for script in start.sh practice.sh learn.sh rl.sh check.sh scripts/untrack-runtime.sh server/start.sh server-plugins/*/build.sh; do

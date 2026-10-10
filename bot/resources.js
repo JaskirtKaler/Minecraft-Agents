@@ -18,10 +18,42 @@ const air = block => block && ['air', 'cave_air', 'void_air'].includes(block.nam
 const hazardous = block => !block || /^(?:water|lava|fire|soul_fire|cactus|magma_block|campfire|sand|gravel)$/.test(block.name);
 const key = p => [p.x, p.y, p.z].join(',');
 
+/** Copy trusted controller metadata before any asynchronous navigation. */
+function containerConstraint (value, item) {
+  if (value === undefined) return null;
+  if (!value || typeof value !== 'object' || Array.isArray(value) ||
+      !value.position || typeof value.position !== 'object' || Array.isArray(value.position) ||
+      !['x', 'y', 'z'].every(axis => Number.isSafeInteger(value.position[axis])) ||
+      typeof value.item !== 'string' || value.item !== item ||
+      !['minimum', 'maximum'].some(bound => Object.hasOwn(value, bound)) ||
+      ['minimum', 'maximum'].some(bound => Object.hasOwn(value, bound) &&
+        (!Number.isSafeInteger(value[bound]) || value[bound] < 0)) ||
+      value.minimum != null && value.maximum != null && value.minimum > value.maximum) {
+    fail('INVALID_CONSTRAINT', 'Transfer constraint needs a matching item, integer chest position, and valid count bounds.');
+  }
+  const copy = { item: value.item, position: new Vec3(value.position.x, value.position.y, value.position.z) };
+  for (const bound of ['minimum', 'maximum']) if (Object.hasOwn(value, bound)) copy[bound] = value[bound];
+  return copy;
+}
+
+function assertContainerProjection (constraint, before, delta) {
+  if (!constraint) return;
+  const projected = before + delta;
+  if (constraint.minimum != null && projected < constraint.minimum ||
+      constraint.maximum != null && projected > constraint.maximum) {
+    fail('GOAL_QUANTITY_LIMIT', 'Transfer would overshoot the fixed goal; choose the remaining quantity.',
+      { before, projected, constraint });
+  }
+}
+
 function safeStances (bot, block) {
   const positions = [];
   for (const [dx, dz] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
-    for (const dy of [0, -1]) {
+    for (const dy of [0, -1, 1, 2]) {
+      // Slopes often expose a stone's top beside a higher grass ledge. Looking
+      // down from that DIFFERENT column is safe; mining our own support is not.
+      // An elevated stance must not turn buried stone into a tunnel candidate.
+      if (dy > 0 && !air(bot.blockAt(block.position.offset(0, 1, 0)))) continue;
       const foot = new Vec3(block.position.x + dx, block.position.y + dy, block.position.z + dz);
       const floor = bot.blockAt(foot.offset(0, -1, 0));
       if (air(bot.blockAt(foot)) && air(bot.blockAt(foot.offset(0, 1, 0))) &&
@@ -44,6 +76,11 @@ function safeBlock (bot, block) {
 
 async function selectTarget (bot, args, excluded) {
   const data = dataFor(bot);
+  const diagnostic = { search_radius: args.maxDistance, source_filter_checks: 0,
+    filter_rejections: { excluded: 0, unsafe_source: 0, no_stance: 0, no_harvest_tool: 0 },
+    found_positions: 0, candidate_count: 0, stance_count: { ordinary: 0, elevated: 0 },
+    path_checks: { ordinary: 0, elevated: 0 }, reachable_paths: { ordinary: 0, elevated: 0 },
+    scan_limited: { ordinary: false, elevated: false }, path_samples: [], failure_tags: [] };
   // Domain grounding: coal ore never becomes a cobblestone candidate.
   const sources = (args.item === 'dirt' ? ['dirt', 'grass_block'] : ['stone', 'cobblestone']).filter(name =>
     data.blockLoot[name]?.drops.some(drop => drop.item === args.item && !drop.silkTouch)
@@ -52,10 +89,16 @@ async function selectTarget (bot, args, excluded) {
     matching: block => block && sources.includes(block.name),
     // Filter exposed faces BEFORE the count limit. Otherwise nearby buried
     // stone can fill all 64 slots and hide the mountain eight blocks away.
-    useExtraInfo: block => block && !excluded.has(key(block.position)) &&
-      safeBlock(bot, block) && safeStances(bot, block).length > 0,
+    useExtraInfo: block => {
+      diagnostic.source_filter_checks++;
+      if (!block || excluded.has(key(block.position))) { diagnostic.filter_rejections.excluded++; return false; }
+      if (!safeBlock(bot, block)) { diagnostic.filter_rejections.unsafe_source++; return false; }
+      if (!safeStances(bot, block).length) { diagnostic.filter_rejections.no_stance++; return false; }
+      return true;
+    },
     maxDistance: args.maxDistance, count: 64
   }) || [];
+  diagnostic.found_positions = positions.length;
   const candidates = [];
   for (const position of positions) {
     if (excluded.has(key(position))) continue;
@@ -64,22 +107,66 @@ async function selectTarget (bot, args, excluded) {
     const tool = args.item === 'dirt'
       ? bot.inventory.items().find(item => item.name.endsWith('_shovel') && !hasSilkTouch(item)) || null
       : harvestTool(bot, block);
-    if (!tool && args.item !== 'dirt') continue;
+    if (!tool && args.item !== 'dirt') { diagnostic.filter_rejections.no_harvest_tool++; continue; }
     const stances = safeStances(bot, block);
     if (stances.length) candidates.push({ block, tool, stances });
   }
+  diagnostic.candidate_count = candidates.length;
   let best = null;
   const scanStarted = Date.now();
-  for (const candidate of candidates) {
-    if (Date.now() - scanStarted > 2000) break;
-    for (const stance of candidate.stances) {
-      if (Date.now() - scanStarted > 2000) break;
+  // A normally reachable side face is preferred to removing adjacent ground
+  // from above. Upper ledges are a fallback for slopes, not a reason to choose
+  // the nearest floor stone over an accessible mountain face.
+  const approaches = { ordinary: [], elevated: [] };
+  for (const name of ['ordinary', 'elevated']) {
+    const groups = candidates.map(candidate => candidate.stances.filter(stance =>
+      (stance.y > candidate.block.position.y) === (name === 'elevated')));
+    // Check one stance per candidate before spending the phase on alternative
+    // stances of a single unreachable block. findBlocks orders loaded targets.
+    for (let index = 0; index < Math.max(0, ...groups.map(group => group.length)); index++) {
+      for (let c = 0; c < candidates.length; c++) {
+        const stance = groups[c][index];
+        if (stance) approaches[name].push({ ...candidates[c], stance });
+      }
+    }
+    diagnostic.stance_count[name] = approaches[name].length;
+  }
+  for (const name of ['ordinary', 'elevated']) {
+    if (best) break; // An established ordinary route still beats downward ledges.
+    const reserveUpper = name === 'ordinary' && approaches.elevated.length > 0;
+    const phaseDeadline = scanStarted + (reserveUpper ? 1000 : 2000);
+    for (const candidate of approaches[name]) {
+      if (Date.now() >= phaseDeadline || diagnostic.path_checks[name] >= 12) {
+        diagnostic.scan_limited[name] = true;
+        break;
+      }
+      const { stance } = candidate;
       const goal = new goals.GoalBlock(stance.x, stance.y, stance.z);
+      diagnostic.path_checks[name]++;
       const cost = await pathCost(bot, goal);
-      if (cost != null && (!best || cost < best.cost)) best = { ...candidate, stance, goal, cost };
+      if (cost != null) diagnostic.reachable_paths[name]++;
+      if (diagnostic.path_samples.filter(sample => sample.phase === name).length < 2) {
+        diagnostic.path_samples.push({ phase: name, target: candidate.block.position, stance,
+          result: cost == null ? 'not_established' : 'reachable' });
+      }
+      if (cost != null && (!best || cost < best.cost)) best = { ...candidate, goal, cost };
     }
   }
-  if (!best) fail('NO_SAFE_RESOURCE', `No exposed ${sources.join('/')} has a safe walking route. I will not dig down or tunnel; help me reach an exposed face.`);
+  diagnostic.scan_elapsed_ms = Date.now() - scanStarted;
+  if (!best) {
+    if (!positions.length) diagnostic.failure_tags.push('NO_SOURCE_POSITIONS_AFTER_SAFETY_FILTER');
+    for (const [reason, count] of Object.entries(diagnostic.filter_rejections)) {
+      if (count && reason !== 'excluded') diagnostic.failure_tags.push(reason.toUpperCase());
+    }
+    if (diagnostic.path_checks.ordinary + diagnostic.path_checks.elevated) diagnostic.failure_tags.push('NO_ROUTE_ESTABLISHED_IN_CHECKED_STANCES');
+    if (Object.values(diagnostic.scan_limited).some(Boolean)) diagnostic.failure_tags.push('PATH_SCAN_INCOMPLETE');
+    console.warn('[Resource Scan Rejected]', JSON.stringify(diagnostic));
+    const description = diagnostic.failure_tags.includes('PATH_SCAN_INCOMPLETE')
+      ? 'The bounded reachability scan did not establish a safe walking route'
+      : `No safe walking route was established for checked exposed ${sources.join('/')}`;
+    fail('NO_SAFE_RESOURCE', `${description}. I will not dig down or tunnel; help me reach an exposed face.`,
+      { resource_scan: diagnostic });
+  }
   return best;
 }
 
@@ -145,8 +232,16 @@ async function mineResource (bot, args, progress = () => {}, options = {}) {
   };
 }
 
-async function resolveChest (bot, args, progress = () => {}) {
-  const positions = bot.findBlocks({
+async function resolveChest (bot, args, progress = () => {}, constraint) {
+  // A frozen goal binds a specific chest. Never choose a nearer/full fallback.
+  const bound = containerConstraint(constraint, args.item);
+  if (bound && bound.position.distanceTo(bot.entity.position) > args.maxDistance) {
+    fail('CHEST_OUT_OF_RANGE', 'The fixed goal chest is outside the loaded search radius.');
+  }
+  if (bound && bot.blockAt(bound.position)?.name !== 'chest') {
+    fail('CHEST_CHANGED', 'The fixed goal chest is absent or unloaded; I will not choose another chest.');
+  }
+  const positions = bound ? [bound.position] : bot.findBlocks({
     matching: block => block && block.name === 'chest', maxDistance: args.maxDistance, count: 16
   }) || [];
   let inspected = 0;
@@ -192,8 +287,17 @@ async function resolveChest (bot, args, progress = () => {}) {
   fail('CHEST_UNREACHABLE', 'I can see a chest, but neither a walking route nor a controlled uphill staircase reached it.', { route_failures: routeFailures });
 }
 
-async function depositItem (bot, args, chestTarget, progress = () => {}) {
-  const destination = chestTarget || await resolveChest(bot, args, progress);
+async function depositItem (bot, args, chestTarget, progress = () => {}, constraint) {
+  const bound = containerConstraint(constraint, args.item);
+  if (bound && chestTarget && (!chestTarget.position ||
+      !bound.position.equals(chestTarget.position))) {
+    fail('INVALID_CONSTRAINT', 'The preselected chest does not match the fixed goal chest.');
+  }
+  if (bound && chestTarget && (!chestTarget.goal ||
+      ['x', 'y', 'z'].some(axis => chestTarget.goal[axis] !== bound.position[axis]))) {
+    fail('INVALID_CONSTRAINT', 'The preselected walking goal does not match the fixed goal chest.');
+  }
+  const destination = chestTarget || await resolveChest(bot, args, progress, bound || undefined);
   progress('walking to the chest');
   const navigation = await moveToGoal(bot, destination.goal, progress);
   const block = bot.blockAt(destination.position);
@@ -211,6 +315,9 @@ async function depositItem (bot, args, chestTarget, progress = () => {}) {
     sourceBefore = chest.inventoryEnd != null
       ? countItems(chest.slots.slice(chest.inventoryStart, chest.inventoryEnd), args.item) : inventoryBefore;
     if (sourceBefore < args.count) fail('INSUFFICIENT_ITEMS', 'Fresh chest-window inventory has too few ' + args.item + '.');
+    // Players can alter the chest after goal grounding or capacity preflight.
+    // Check this window immediately before the first transfer, not stale data.
+    assertContainerProjection(bound, chestBefore, args.count);
     progress('depositing exact count');
     await chest.deposit(stack.type, null, args.count);
   } finally {
@@ -242,4 +349,4 @@ async function depositItem (bot, args, chestTarget, progress = () => {}) {
   }
 }
 
-module.exports = { mineResource, depositItem, resolveChest, safeStances };
+module.exports = { mineResource, depositItem, resolveChest, safeStances, containerConstraint, assertContainerProjection };

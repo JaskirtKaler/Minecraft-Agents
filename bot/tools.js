@@ -8,8 +8,9 @@ const { dataFor, describeSubject, plantingRule } = require('./knowledge');
 const { targetFacts, recipeInfo, recipeBudget, craftingBudget, plantingSites } = require('./grounding');
 const { recoverPickup } = require('./pickup');
 const { toolTiming } = require('./tool_timing');
+const { placeBatch, digBatch, repairBatch, guardConstructionAction, hasConstructionTarget } = require('./construction');
 
-const READ_TOOLS = new Set(['inspect', 'recipes', 'craft_budget', 'find_blocks', 'container', 'planting_sites']);
+const READ_TOOLS = new Set(['inspect', 'inspect_region', 'recipes', 'craft_budget', 'find_blocks', 'container', 'planting_sites']);
 const SKILLS = new Set(['mine_logs', 'mine_resource', 'give_item', 'deposit_item', 'escape_staircase']);
 const count = (bot, name) => bot.inventory.items().filter(item => item.name === name).reduce((n, item) => n + item.count, 0);
 function fail (code, message, data = {}) { throw Object.assign(new Error(message), { code, data }); }
@@ -20,6 +21,49 @@ function amount (value = 1) {
 function position (value) {
   if (!value || !['x', 'y', 'z'].every(axis => Number.isInteger(value[axis]))) fail('INVALID_ARGUMENT', 'position needs integer x, y, z.');
   return new Vec3(value.x, value.y, value.z);
+}
+function plainPosition (value) { return { x: value.x, y: value.y, z: value.z }; }
+function inspectRegionBounds (args) {
+  const min = position(args.min);
+  const max = position(args.max);
+  if (min.x > max.x || min.y > max.y || min.z > max.z) {
+    fail('INVALID_REGION', 'min coordinates must be less than or equal to max coordinates.');
+  }
+  const dimensions = { x: max.x - min.x + 1, y: max.y - min.y + 1, z: max.z - min.z + 1 };
+  const cellCount = dimensions.x * dimensions.y * dimensions.z;
+  if (!Number.isSafeInteger(cellCount) || cellCount > 4096) {
+    fail('REGION_TOO_LARGE', 'inspect_region accepts at most 4096 inclusive cells; split the survey into smaller regions.',
+      { min: plainPosition(min), max: plainPosition(max), dimensions, cell_count: cellCount });
+  }
+  return { min, max, dimensions, cellCount };
+}
+function inspectRegion (bot, args) {
+  // Validate every coordinate before reading a block. This prevents a partial
+  // response from being mistaken for a complete survey when one far cell is
+  // invalid or outside the tool's existing observation radius.
+  const { min, max, dimensions, cellCount } = inspectRegionBounds(args);
+  if (!bot.entity || !bot.entity.position) fail('POSITION_UNAVAILABLE', 'The bot position is unavailable for this survey.');
+  const positions = [];
+  for (let x = min.x; x <= max.x; x++) {
+    for (let y = min.y; y <= max.y; y++) {
+      for (let z = min.z; z <= max.z; z++) {
+        const target = new Vec3(x, y, z);
+        if (target.distanceTo(bot.entity.position) > 64) {
+          fail('OUT_OF_RANGE', 'Every inspect_region cell must be within the 64-block tool radius; move closer or split the region.',
+            { position: plainPosition(target), min: plainPosition(min), max: plainPosition(max) });
+        }
+        positions.push(target);
+      }
+    }
+  }
+  const cells = positions.map(target => {
+    const block = bot.blockAt(target);
+    if (!block) return { position: plainPosition(target), name: 'unknown', loaded: false };
+    const cell = { position: plainPosition(target), name: block.name };
+    if (!['air', 'cave_air', 'void_air'].includes(block.name)) cell.properties = block.getProperties?.() || {};
+    return cell;
+  });
+  return { min: plainPosition(min), max: plainPosition(max), dimensions, cell_count: cellCount, cells };
 }
 function loaded (bot, value) {
   const p = position(value);
@@ -44,12 +88,30 @@ async function approach (bot, block) {
 async function executeTool (bot, tool, options = {}) {
   const name = tool?.name;
   const args = tool?.args || {};
-  if (SKILLS.has(name)) return executeTask(bot, { name, args }, { ...toolTiming(tool), ...options });
+  // This closure is trusted controller state, not a model-supplied option.
+  // Recheck each actual dig, including convenience gathering/staircase tools.
+  const context = options.constructionContext;
+  if (context) options = { ...options, beforeDig: (raw, block) => {
+    guardConstructionAction(raw, { name: name === 'repair_batch' ? 'repair_batch' : 'dig',
+      args: { position: plainPosition(block.position), positions: [plainPosition(block.position)] } }, context);
+  } };
+  if (SKILLS.has(name)) return executeTask(bot, { name, args }, {
+    ...toolTiming(tool), ...options, containerConstraint: tool.container_constraint
+  });
   try {
     const result = await runOperation(bot, async b => {
+      if (context) guardConstructionAction(b, tool, context);
       options.onProgress?.('tool: ' + name);
       if (name === 'inspect') {
         return args.position ? targetFacts(b, loaded(b, args.position)) : describeSubject(b, args.item);
+      }
+      if (name === 'inspect_region') return inspectRegion(b, args);
+      if (['place_batch', 'dig_batch', 'repair_batch'].includes(name)) {
+        const batch = name === 'place_batch' ? await placeBatch(b, args, context)
+          : name === 'repair_batch' ? await repairBatch(b, args, context) : await digBatch(b, args);
+        if (!batch.complete || !batch.verified) fail('BATCH_NOT_COMPLETE',
+          'Some requested cells remain unresolved; inspect partial evidence and replan, not completion.', { partial: batch });
+        return batch;
       }
       if (name === 'craft_budget') {
         return craftingBudget(b, args.steps, totals(b.inventory.items()));
@@ -143,6 +205,13 @@ async function executeTool (bot, tool, options = {}) {
       if (name === 'place') {
         const target = loaded(b, args.position);
         const planting = plantingRule(b, args.item);
+        if (context && hasConstructionTarget(context, args.position) && !planting &&
+            dataFor(b).blocksByName[args.item] && dataFor(b).itemsByName[args.item]) {
+          const batch = await placeBatch(b, { item: args.item, positions: [args.position] }, context);
+          if (!batch.complete || !batch.verified) fail('BATCH_NOT_COMPLETE',
+            'Single structural placement was not verified; inspect partial evidence.', { partial: batch });
+          return batch;
+        }
         if (planting) {
           const soil = b.blockAt(target.position.offset(0, -1, 0));
           if (!soil || !planting.soils.includes(soil.name)) fail('INVALID_PLANTING_TARGET',
@@ -166,6 +235,7 @@ async function executeTool (bot, tool, options = {}) {
         if (p.distanceTo(b.entity.position) > 4.5) fail('OUT_OF_REACH', 'walk_to an adjacent cell before placing.');
         const before = count(b, args.item);
         await b.equip(item, 'hand');
+        if (context) guardConstructionAction(b, tool, context);
         await b.placeBlock(reference, face);
         if (b.waitForTicks) await b.waitForTicks(2);
         const after = loaded(b, p);
@@ -249,7 +319,8 @@ async function executeTool (bot, tool, options = {}) {
         } finally { window.close(); }
       }
       fail('UNKNOWN_TOOL', 'Unknown Minecraft tool: ' + name);
-    }, { timeoutMs: options.timeoutMs ?? 60000 });
+    }, { ...toolTiming(tool), ...(name === 'place_batch' ? { progressValue: b => -count(b, args.item) } : {}),
+      ...options });
     return { success: true, verified: !['use_on_block'].includes(name), data: result };
   } catch (error) {
     return { success: false, verified: false, status: /NOT_VERIFIED$/.test(error.code || '') || ['CANCELLED', 'TASK_TIMEOUT'].includes(error.code) ? 'unknown' : 'failed',

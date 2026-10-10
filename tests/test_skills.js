@@ -11,6 +11,36 @@ function position (x, y, z) {
   return { x, y, z };
 }
 
+// A resolved pathfinder.goto() means the bot reached a goal node in the real
+// client. Keep successful fakes honest now that walkTo verifies that fact.
+function goalAnchor (goal) {
+  if (Number.isFinite(goal?.x) && Number.isFinite(goal?.y) && Number.isFinite(goal?.z)) return goal;
+  for (const nested of goal?.goals || []) {
+    const anchor = goalAnchor(nested);
+    if (anchor) return anchor;
+  }
+  return goal?.goal ? goalAnchor(goal.goal) : null;
+}
+
+function arriveAtGoal (bot, goal) {
+  const anchor = goalAnchor(goal) || bot.entity.position;
+  for (const dy of [0, -1, 1, 2, -2]) {
+    for (let radius = 0; radius <= 4; radius++) {
+      for (let dx = -radius; dx <= radius; dx++) {
+        for (let dz = -radius; dz <= radius; dz++) {
+          if (Math.max(Math.abs(dx), Math.abs(dz)) !== radius) continue;
+          const node = position(Math.floor(anchor.x) + dx, Math.floor(anchor.y) + dy, Math.floor(anchor.z) + dz);
+          if (goal.isEnd(node)) {
+            bot.entity.position = node;
+            return;
+          }
+        }
+      }
+    }
+  }
+  throw new Error('Test route could not find a goal-reaching node.');
+}
+
 function makeBot ({ logs = 0, candidateCount = 8, recipientVisible = true, useTossStackOnly = false } = {}) {
   const inventory = logs > 0 ? [{ name: 'oak_log', type: 110, count: logs, slot: 10 }] : [];
   const blocks = new Map();
@@ -39,6 +69,7 @@ function makeBot ({ logs = 0, candidateCount = 8, recipientVisible = true, useTo
       getPathTo: () => ({ status: 'success', cost: 1 }),
       async goto (goal) {
         calls.goto.push(goal);
+        arriveAtGoal(bot, goal);
       }
     },
     findBlocks ({ matching, count }) {
@@ -101,9 +132,67 @@ async function testMineLogs () {
   assert.equal(result.data.observed_after, 2);
   assert.equal(result.data.blocks_dug, 2);
   assert.equal(calls.digs.length, 2);
-  assert.equal(calls.goto[0].constructor.name, 'GoalCompositeAll');
-  assert.equal(calls.goto[0].isEnd({ x: 1, y: 65, z: 0 }), false, 'Do not stand on the log.');
-  assert.equal(calls.goto[0].isEnd({ x: 1, y: 64, z: 1 }), true, 'Approach beside it.');
+  assert.equal(calls.goto.length, 0, 'Already reachable safe logs do not need pathfinding.');
+}
+
+async function testSafeOverheadLogNeedsNoNavigation () {
+  const { bot, calls } = makeBot({ candidateCount: 1 });
+  bot.entity.position = position(1, 62, 0);
+  bot.pathfinder.goto = async () => { throw new Error('An overhead reachable log must not need a route.'); };
+  const result = await executeTask(bot, { name: 'mine_logs', args: { item: 'oak_log', count: 1 } });
+  assert.equal(result.verified, true, result.message);
+  assert.deepEqual(calls.digs, [position(1, 64, 0)]);
+  assert.equal(calls.goto.length, 0);
+  assert.equal(result.data.blocks_dug, 1);
+  assert.equal(result.data.observed_after, 1);
+}
+
+async function testLogNavigationAllowsSafeOverheadAndBesideStances () {
+  const { bot, calls } = makeBot({ candidateCount: 1 });
+  let reached = false;
+  bot.canDigBlock = block => reached && Boolean(block);
+  bot.pathfinder.goto = async goal => {
+    calls.goto.push(goal);
+    assert.equal(goal.constructor.name, 'GoalSafeGetToLog');
+    assert.equal(goal.isEnd(position(1, 65, 0)), false, 'Do not stand on the log.');
+    assert.equal(goal.isEnd(position(1, 62, 0)), true, 'A same-column log overhead is not underfoot.');
+    assert.equal(goal.isEnd(position(1, 64, 1)), true, 'Approach beside it.');
+    assert.equal(goal.isEnd(position(1, 63, 1)), true, 'A lower beside stance is also safe.');
+    bot.entity.position = position(1, 64, 1);
+    reached = true;
+  };
+  const result = await executeTask(bot, { name: 'mine_logs', args: { item: 'oak_log', count: 1 } });
+  assert.equal(result.verified, true, result.message);
+  assert.equal(calls.goto.length, 1);
+  assert.equal(calls.digs.length, 1);
+}
+
+async function testStandingOnLogMustMoveBeforeDigging () {
+  const { bot, calls } = makeBot({ candidateCount: 1 });
+  bot.entity.position = position(1, 65, 0);
+  bot.pathfinder.goto = async goal => {
+    calls.goto.push(goal);
+    assert.equal(calls.digs.length, 0, 'Reach alone must not authorize underfoot mining.');
+    assert.equal(goal.isEnd(bot.entity.position), false);
+    bot.entity.position = position(2, 64, 0);
+  };
+  const result = await executeTask(bot, { name: 'mine_logs', args: { item: 'oak_log', count: 1 } });
+  assert.equal(result.verified, true, result.message);
+  assert.equal(calls.goto.length, 1);
+  assert.equal(calls.digs.length, 1);
+}
+
+async function testNavigationDoesNotAuthorizeAnUnsafeActualStance () {
+  const { bot, calls } = makeBot({ candidateCount: 1 });
+  bot.entity.position = position(1, 65, 0);
+  // The mock route reports completion without moving. Actual stance still wins.
+  bot.pathfinder.goto = async goal => { calls.goto.push(goal); };
+  const result = await executeTask(bot, { name: 'mine_logs', args: { item: 'oak_log', count: 1 } });
+  assert.equal(result.verified, false);
+  assert.equal(result.data.error_code, 'NO_REACHABLE_LOG');
+  assert.equal(calls.goto.length, 1);
+  assert.equal(calls.digs.length, 0);
+  assert.equal(result.data.blocks_dug, 0);
 }
 
 async function testFailedLogPickupDoesNotMineAnotherLog () {
@@ -118,6 +207,7 @@ async function testFailedLogPickupDoesNotMineAnotherLog () {
   bot.pathfinder.goto = async goal => {
     if (goal.constructor.name === 'GoalBlock') throw new Error('Drop is no longer reachable');
     calls.goto.push(goal);
+    arriveAtGoal(bot, goal);
   };
   const result = await executeTask(bot, { name: 'mine_logs', args: { item: 'oak_log', count: 2 } });
   assert.equal(result.status, 'unknown');
@@ -231,6 +321,10 @@ async function testGetAndGiveUsesHeldLogs () {
 async function run () {
   await require('./test_rl_navigation').runRlNavigationTests();
   await testMineLogs();
+  await testSafeOverheadLogNeedsNoNavigation();
+  await testLogNavigationAllowsSafeOverheadAndBesideStances();
+  await testStandingOnLogMustMoveBeforeDigging();
+  await testNavigationDoesNotAuthorizeAnUnsafeActualStance();
   await testFailedLogPickupDoesNotMineAnotherLog();
   await testGiveExactCount();
   await testNoOverDelivery();

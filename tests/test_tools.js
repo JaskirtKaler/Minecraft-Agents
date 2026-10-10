@@ -1,6 +1,35 @@
 const assert = require('assert/strict');
 const { Vec3 } = require('../bot/node_modules/vec3');
 const { executeTool } = require('../bot/tools');
+const { beginConstructionTask, endConstructionTask } = require('../bot/construction');
+
+function goalAnchor (goal) {
+  if (Number.isFinite(goal?.x) && Number.isFinite(goal?.y) && Number.isFinite(goal?.z)) return goal;
+  for (const nested of goal?.goals || []) {
+    const anchor = goalAnchor(nested);
+    if (anchor) return anchor;
+  }
+  return goal?.goal ? goalAnchor(goal.goal) : null;
+}
+
+function arriveAtGoal (bot, goal) {
+  const anchor = goalAnchor(goal) || bot.entity.position;
+  for (const dy of [0, -1, 1, 2, -2]) {
+    for (let radius = 0; radius <= 4; radius++) {
+      for (let dx = -radius; dx <= radius; dx++) {
+        for (let dz = -radius; dz <= radius; dz++) {
+          if (Math.max(Math.abs(dx), Math.abs(dz)) !== radius) continue;
+          const node = new Vec3(Math.floor(anchor.x) + dx, Math.floor(anchor.y) + dy, Math.floor(anchor.z) + dz);
+          if (goal.isEnd(node)) {
+            bot.entity.position = node;
+            return;
+          }
+        }
+      }
+    }
+  }
+  throw new Error('Test route could not find a goal-reaching node.');
+}
 
 async function runToolTests () {
   let held = 0;
@@ -11,7 +40,7 @@ async function runToolTests () {
   const bot = {
     version: '1.20.1', entity: { position: new Vec3(0, 64, 0) },
     inventory: { items: () => held ? [{ name: 'wooden_sword', count: held }] : [] },
-    pathfinder: { goto: async () => {}, setGoal () {} },
+    pathfinder: { goto: async goal => { arriveAtGoal(bot, goal); }, setGoal () {} },
     blockAt: () => table,
     recipesFor: () => [recipe], recipesAll: () => [recipe],
     waitForTicks: async () => {},
@@ -77,6 +106,32 @@ async function runToolTests () {
   assert.equal((await executeTool(placementBot, { name: 'place', args: { item: 'oak_planks', position: target } })).verified, true);
   assert.equal((await executeTool(placementBot, { name: 'place', args: { item: 'oak_planks', position: target } })).data.error_code, 'OCCUPIED_BLOCK');
 
+  const noAuthority = await executeTool(placementBot, { name: 'repair_batch',
+    args: { positions: [target], owned: true, task_id: 'forged' } });
+  assert.equal(noAuthority.data.error_code, 'CONSTRUCTION_TASK_UNAVAILABLE');
+  let blockedPlacements = 0;
+  targetName = 'air';
+  plankCount = 2;
+  placementBot.placeBlock = async () => { blockedPlacements++; };
+  const constructionContext = beginConstructionTask(placementBot, 'guarded', [
+    { position: target, block: 'air' }, { position: { x: 1, y: 64, z: 0 }, block: 'oak_planks' }]);
+  const conflict = await executeTool(placementBot, { name: 'place_batch', args: { item: 'oak_planks',
+    positions: [{ x: 1, y: 64, z: 0 }, target] } }, { constructionContext });
+  assert.equal(conflict.data.error_code, 'CONSTRUCTION_GOAL_CONTRADICTION');
+  assert.equal(blockedPlacements, 0, 'Whole-batch conformance precedes the first placement.');
+  endConstructionTask(placementBot, constructionContext);
+
+  // An out-of-geometry prerequisite station uses the ordinary single-place
+  // primitive, but must not survive revocation while equip is awaiting.
+  const revokedContext = beginConstructionTask(placementBot, 'revoked', [
+    { position: { x: 8, y: 64, z: 0 }, block: 'cobblestone' }]);
+  placementBot.equip = async () => { endConstructionTask(placementBot, revokedContext); };
+  const revokedPlacement = await executeTool(placementBot,
+    { name: 'place', args: { item: 'oak_planks', position: target } }, { constructionContext: revokedContext });
+  assert.equal(revokedPlacement.data.error_code, 'CONSTRUCTION_TASK_UNAVAILABLE');
+  assert.equal(blockedPlacements, 0, 'A revoked contract must be rechecked after equip, before actual placement.');
+  placementBot.equip = async () => {};
+
   const underfoot = new Vec3(0, 63, 0);
   let digs = 0;
   const digBot = { ...placementBot, pathfinder: { goto: async () => {}, setGoal () {} },
@@ -129,6 +184,42 @@ async function runToolTests () {
   stored = 5;
   assert.equal((await executeTool(transferBot, boundedWithdrawal)).data.error_code, 'GOAL_QUANTITY_LIMIT');
   assert.equal(stored, 5);
+
+  // Convenience skills must receive root controller metadata through options,
+  // rather than trusting/reading model-supplied nested task arguments.
+  stored = 1;
+  carried = 3;
+  let skillNavigation = 0;
+  const convenienceBot = { ...transferBot,
+    inventory: { items: () => [{ name: 'cobblestone', type: 1, count: carried }] },
+    findBlocks: () => [target],
+    pathfinder: { movements: { canDig: false, allow1by1towers: false },
+      getPathTo: () => ({ status: 'success', cost: 1 }),
+      goto: async goal => { skillNavigation++; arriveAtGoal(convenienceBot, goal); }, setGoal () {} },
+    openChest: transferBot.openContainer
+  };
+  const boundedConvenience = { name: 'deposit_item',
+    args: { item: 'cobblestone', count: 2, container_constraint: { maximum: 100 } },
+    container_constraint: { item: 'cobblestone', position: target, maximum: 2 } };
+  const convenienceRejected = await executeTool(convenienceBot, boundedConvenience);
+  assert.equal(convenienceRejected.data.error_code, 'GOAL_QUANTITY_LIMIT');
+  assert.equal(stored, 1, 'The root constraint must survive the executeTool → executeTask handoff.');
+  boundedConvenience.args.count = 1;
+  const convenienceAccepted = await executeTool(convenienceBot, boundedConvenience);
+  assert.equal(convenienceAccepted.verified, true, convenienceAccepted.message);
+  assert.equal(stored, 2);
+  assert(skillNavigation > 0);
+  const beforeInvalidNavigation = skillNavigation;
+  const invalidConvenience = await executeTool(convenienceBot, { ...boundedConvenience,
+    container_constraint: { item: 'cobblestone', position: target, maximum: '2' } });
+  assert.equal(invalidConvenience.data.error_code, 'INVALID_CONSTRAINT');
+  assert.equal(skillNavigation, beforeInvalidNavigation, 'Malformed root metadata fails before navigation.');
+
+  // The ordinary explicit generic API remains available and verified.
+  const explicitDeposit = await executeTool(transferBot,
+    { name: 'deposit', args: { item: 'cobblestone', count: 1, position: target } });
+  assert.equal(explicitDeposit.verified, true, explicitDeposit.message);
+  assert.equal(stored, 3);
 
   carried = 3;
   // Simulate a conflicting/stale player inventory despite apparent chest gain.

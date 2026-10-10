@@ -4,6 +4,9 @@
   "gatherPerItemMs": 8000,
   "gatherMaxMs": 300000,
   "gatherIdleMs": 60000,
+  "buildBaseMs": 15000,
+  "buildPerCellMs": 2500,
+  "buildMaxMs": 300000,
   "rpcGraceMs": 20000,
   "settleMs": 15000
 }

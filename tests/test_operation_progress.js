@@ -9,9 +9,20 @@ async function runProgressTests () {
   assert.equal(toolTiming({ name: 'craft' }).timeoutMs, 60000);
   assert.equal(toolTiming({ name: 'mine_logs', args: { count: 16 } }).timeoutMs, 218000);
   assert.equal(toolTiming({ name: 'mine_logs', args: { count: 64 } }).timeoutMs, policy.gatherMaxMs);
+  assert.equal(toolTiming({ name: 'repair_batch', args: { positions: [{}, {}, {}] } }).timeoutMs,
+    policy.buildBaseMs + 3 * policy.buildPerCellMs);
 
   const bot = { entity: { position: new Vec3(0, 64, 0) },
     pathfinder: { setGoal () {} }, stopDigging () {}, clearControlStates () {} };
+  let primitiveDigs = 0;
+  bot.dig = async () => { primitiveDigs++; };
+  const finalBlock = { name: 'cobblestone', position: new Vec3(1, 64, 0) };
+  await assert.rejects(runOperation(bot, b => b.dig(finalBlock), { beforeDig: (raw, block) => {
+    assert.equal(raw, bot);
+    assert.equal(block, finalBlock);
+    throw Object.assign(new Error('Correct accepted final block.'), { code: 'CONSTRUCTION_ALREADY_CORRECT' });
+  } }), error => error.code === 'CONSTRUCTION_ALREADY_CORRECT');
+  assert.equal(primitiveDigs, 0, 'Gathering and direct digging must share the last-moment conformance hook.');
   let collected = 0;
   const gaining = setInterval(() => { collected++; }, 70);
   try {

@@ -7,6 +7,10 @@ GATHER = {'mine_logs', 'mine_resource'}
 
 
 def tool_timeout(tool):
+    if tool.get('name') in {'place_batch', 'dig_batch', 'repair_batch'}:
+        positions = tool.get('args', {}).get('positions', [])
+        count = min(64, max(1, len(positions))) if isinstance(positions, list) else 1
+        return min(POLICY['buildMaxMs'], POLICY['buildBaseMs'] + count * POLICY['buildPerCellMs']) / 1000
     if tool.get('name') not in GATHER:
         return POLICY['shortMs'] / 1000
     count = tool.get('args', {}).get('count', 1)

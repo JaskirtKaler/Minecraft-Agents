@@ -88,7 +88,7 @@ public final class PracticeOracle extends JavaPlugin implements Listener {
 
     private void setup(String scenario, Player bot) {
         var valid = List.of("held_deposit", "partial_stack", "multiple_stacks", "collect_cobble", "collect_logs",
-            "collect_dirt", "batch", "missing_tool", "full_chest", "blocked_stone", "unsupported_batch", "staircase", "explore");
+            "collect_dirt", "batch", "missing_tool", "full_chest", "blocked_stone", "unsupported_batch", "staircase", "overhead_logs", "explore");
         if (!valid.contains(scenario)) throw new IllegalArgumentException("Unknown fixture: " + scenario);
         bot.closeInventory();
         resetTerrain();
@@ -123,6 +123,13 @@ public final class PracticeOracle extends JavaPlugin implements Listener {
                     for (int y = 64; y <= 68; y++) set(x, y, z, Material.STONE);
                 set(0, 64, 0, Material.AIR);
                 set(0, 65, 0, Material.AIR);
+            }
+            case "overhead_logs" -> {
+                // No ground-level logs can hide a broken overhead approach.
+                // The bot can mine this small trunk from stable ground without
+                // breaking its floor, climbing, placing scaffolds or flying.
+                for (int x = 8; x <= 17; x++) set(x, 64, 4, Material.AIR);
+                for (int y = 66; y <= 68; y++) set(0, y, 0, Material.OAK_LOG);
             }
             default -> {}
         }

@@ -52,6 +52,7 @@ class Config(BaseModel):
     planner_max_tokens: int = Field(default_factory=lambda: int(os.getenv('PLANNER_MAX_TOKENS', '1536')), ge=256, le=16384, validate_default=True)
     agent_batch_size: int = Field(default_factory=lambda: int(os.getenv('AGENT_BATCH_SIZE', '4')), ge=1, le=8, validate_default=True)
     agent_max_plan_errors: int = Field(default_factory=lambda: int(os.getenv('AGENT_MAX_PLAN_ERRORS', '3')), ge=1, le=10, validate_default=True)
+    agent_max_no_progress_actions: int = Field(default_factory=lambda: int(os.getenv('AGENT_MAX_NO_PROGRESS_ACTIONS', '4')), ge=2, le=20, validate_default=True)
     agent_reflection_delay: float = Field(default_factory=lambda: float(os.getenv('AGENT_REFLECTION_DELAY', '10')), ge=0, le=300, validate_default=True)
     goal_review_enabled: bool = Field(default_factory=lambda: os.getenv('GOAL_REVIEW_ENABLED', 'true').lower() == 'true')
     learning_dir: str = Field(default_factory=lambda: os.getenv("LEARNING_DIR", "data/learning"))

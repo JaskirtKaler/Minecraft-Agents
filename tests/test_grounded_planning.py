@@ -72,9 +72,13 @@ class GroundingTests(unittest.IsolatedAsyncioTestCase):
         bridge.execute_tool.side_effect = None
         bridge.execute_tool.return_value = {'success': True, 'data': {'name': 'wheat'}}
         self.assertFalse((await agent.check([goal], ['wheat'], state))[0])
-        receipt = {'action': {'name': 'place'}, 'result': {'success': True, 'verified': True,
-                  'data': {'name': 'wheat', 'position': goal['position']}}}
+        receipt = {'action': {'name': 'place', 'args': {'item': 'wheat_seeds', 'position': goal['position']}},
+                  'result': {'success': True, 'verified': True,
+                  'data': {'name': 'wheat', 'position': goal['position'], 'inventory_before': 3, 'inventory_after': 2}}}
         self.assertTrue((await agent.check([goal], ['wheat'], state, [receipt]))[0])
+        receipt['result']['data']['inventory_after'] = 3
+        self.assertFalse((await agent.check([goal], ['wheat'], state, [receipt]))[0], 'An idempotent placement is not new planting.')
+        receipt['result']['data']['inventory_after'] = 2
         receipt['result']['verified'] = False
         self.assertFalse((await agent.check([goal], ['wheat'], state, [receipt]))[0])
 

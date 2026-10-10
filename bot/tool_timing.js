@@ -2,6 +2,10 @@
 const policy = require('../shared/tool_timing.json');
 const GATHER = new Set(['mine_logs', 'mine_resource']);
 function toolTiming (tool) {
+  if (['place_batch', 'dig_batch', 'repair_batch'].includes(tool?.name)) {
+    const count = Array.isArray(tool.args?.positions) ? Math.min(64, Math.max(1, tool.args.positions.length)) : 1;
+    return { timeoutMs: Math.min(policy.buildMaxMs, policy.buildBaseMs + count * policy.buildPerCellMs) };
+  }
   if (!GATHER.has(tool?.name)) return { timeoutMs: policy.shortMs };
   const count = Number.isInteger(tool.args?.count) ? Math.min(64, Math.max(1, tool.args.count)) : 1;
   return { timeoutMs: Math.min(policy.gatherMaxMs, policy.gatherBaseMs + count * policy.gatherPerItemMs),

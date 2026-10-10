@@ -11,8 +11,8 @@
  */
 
 const { goals } = require('mineflayer-pathfinder');
-const { runOperation } = require('./operations');
-const { mineResource, depositItem, resolveChest } = require('./resources');
+const { runOperation, assertDigSafety } = require('./operations');
+const { mineResource, depositItem, resolveChest, containerConstraint } = require('./resources');
 const { walkTo, moveToGoal, executeStaircase } = require('./navigation');
 const { recoverPickup } = require('./pickup');
 
@@ -220,6 +220,31 @@ function formatAttemptErrors (attemptErrors) {
   return ` Last attempts: ${attemptErrors.slice(-3).join(' | ')}.`;
 }
 
+class GoalSafeGetToLog extends goals.GoalGetToBlock {
+  isEnd (node) {
+    if (!super.isEnd(node)) return false;
+    try {
+      // Standing above this log is unsafe; standing below an overhead log is
+      // normal mining. Reuse the actual vertical dig rule, not a whole column ban.
+      assertDigSafety({ entity: { position: node } }, { position: this });
+      return true;
+    } catch (error) {
+      if (error.code === 'UNSAFE_DIG') return false;
+      throw error;
+    }
+  }
+}
+
+function canDigLogSafely (bot, block) {
+  try {
+    assertDigSafety(bot, block);
+    return bot.canDigBlock(block);
+  } catch (error) {
+    if (error.code === 'UNSAFE_DIG') return false;
+    throw error;
+  }
+}
+
 async function mineLogs (bot, { item, count, maxDistance: searchDistance, collectionMode = 'additional' }, progress = () => {}) {
   assertPathfinder(bot);
   if (typeof bot.findBlocks !== 'function' || typeof bot.blockAt !== 'function') {
@@ -260,17 +285,17 @@ async function mineLogs (bot, { item, count, maxDistance: searchDistance, collec
       if (!block || block.name !== item) continue;
 
       try {
-        progress(`walking to ${item}; holding ${countItem(bot, item)}/${targetAfter}`);
-        // GetToBlock alone also accepts standing ON the log. Approach beside
-        // it so the underfoot-dig safeguard never has to reject that route.
-        const p = block.position;
-        await gotoWithTimeout(bot, new goals.GoalCompositeAll([
-          new goals.GoalGetToBlock(p.x, p.y, p.z),
-          new goals.GoalInvert(new goals.GoalXZ(p.x, p.z))
-        ]), Math.max(30000, searchDistance * 750));
+        // Do not climb/pathfind to a log that is already safely within dig reach.
+        // The guarded dig still rechecks underfoot safety immediately before use.
+        if (!canDigLogSafely(bot, block)) {
+          progress(`walking to ${item}; holding ${countItem(bot, item)}/${targetAfter}`);
+          const p = block.position;
+          await gotoWithTimeout(bot, new GoalSafeGetToLog(p.x, p.y, p.z),
+            Math.max(30000, searchDistance * 750));
+        }
 
-        if (!bot.canDigBlock(block)) {
-          attemptErrors.push(`${positionKey(block.position)} is not reachable for digging`);
+        if (!canDigLogSafely(bot, block)) {
+          attemptErrors.push(`${positionKey(block.position)} is not safely reachable for digging`);
           continue;
         }
 
@@ -498,6 +523,12 @@ async function executeTask (bot, task, options = {}) {
   let inventoryBefore = null;
   try {
     parsed = parseTask(task);
+    // Only trusted execution options carry frozen-goal metadata; task/model
+    // arguments cannot select, replace, or disable this guard.
+    const constraint = containerConstraint(options.containerConstraint, parsed.item);
+    if (constraint && parsed.name !== 'deposit_item') {
+      throw new TaskError('INVALID_CONSTRAINT', 'A fixed chest constraint is only supported for a single deposit_item skill.');
+    }
     inventoryBefore = parsed.item ? countItem(bot, parsed.item) : null;
     const progress = options.onProgress || (() => {});
     const result = await runOperation(bot, async guarded => {
@@ -540,7 +571,7 @@ async function executeTask (bot, task, options = {}) {
       if (parsed.name === 'mine_resource') return mineResource(guarded, parsed, progress);
       if (parsed.name === 'give_item') return giveItem(guarded, parsed, progress);
       if (parsed.name === 'mine_and_give') return mineAndGive(guarded, parsed, progress);
-      if (parsed.name === 'deposit_item') return depositItem(guarded, parsed, null, progress);
+      if (parsed.name === 'deposit_item') return depositItem(guarded, parsed, null, progress, constraint || undefined);
       // Reach/inspect the destination first, using controlled escape if needed.
       const chest = await resolveChest(guarded, parsed, progress);
       const mined = isLogName(parsed.item) ? await mineLogs(guarded, parsed, progress) : await mineResource(guarded, parsed, progress, { baseline: inventoryBefore });
@@ -549,6 +580,7 @@ async function executeTask (bot, task, options = {}) {
         item: parsed.item, requested_count: parsed.count, mine: mined.data, deposit: deposited.data
       } };
     }, { timeoutMs: options.timeoutMs ?? MAX_TASK_DURATION_MS, idleTimeoutMs: options.idleTimeoutMs ?? null,
+      beforeDig: options.beforeDig,
       progressValue: ['mine_logs', 'mine_resource'].includes(parsed.name) ? b => countItem(b, parsed.item) : null });
 
     return {

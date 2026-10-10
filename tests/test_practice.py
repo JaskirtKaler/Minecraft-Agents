@@ -5,7 +5,7 @@ import unittest
 from unittest.mock import patch
 
 from practice.runner import prepare_server
-from practice.scenarios import SCENARIOS, evaluate
+from practice.scenarios import SCENARIOS, OPTIONAL_SCENARIOS, evaluate
 
 
 class PracticeOracleEvaluationTests(unittest.TestCase):
@@ -49,6 +49,16 @@ class PracticeOracleEvaluationTests(unittest.TestCase):
         failures = evaluate(SCENARIOS[0], self.state(inventory=12), after,
                             {"success": True, "verified": True}, {"kind": "task"})
         self.assertIn("Server chest delta dirt: 1, expected 0", failures)
+
+    def test_overhead_fixture_requires_server_confirmed_exact_collection_without_floor_breaks(self):
+        scenario = next(case for case in OPTIONAL_SCENARIOS if case.name == 'overhead_logs')
+        before = {'chest': {}, 'inventory': {}, 'health': 20}
+        after = {'chest': {'oak_log': 3}, 'inventory': {'oak_log': 0}, 'health': 20,
+                 'broken': [{'block': 'oak_log', 'x': 0, 'y': y, 'z': 0} for y in (66, 67, 68)]}
+        result = {'success': True, 'verified': True}
+        self.assertEqual(evaluate(scenario, before, after, result, {'kind': 'task'}), [])
+        after['broken'].append({'block': 'stone', 'x': 0, 'y': 63, 'z': 0})
+        self.assertTrue(evaluate(scenario, before, after, result, {'kind': 'task'}))
 
 
 class PracticeIsolationTests(unittest.TestCase):
