@@ -16,7 +16,7 @@ logger = logging.getLogger("BridgeServer")
 logging.basicConfig(level=logging.INFO)
 
 class MineflayerBridge:
-    def __init__(self, host: str = "0.0.0.0", port: int = 8765):
+    def __init__(self, host: str = "127.0.0.1", port: int = 8765):
         self.host = host
         self.port = port
         self.active_client: Optional[WebSocketServerProtocol] = None
@@ -43,6 +43,9 @@ class MineflayerBridge:
 
     async def _handle_client(self, websocket: WebSocketServerProtocol, path: str = ""):
         """Handles incoming WebSocket connection from Node.js Mineflayer bot."""
+        if self.active_client is not None:
+            await websocket.close(code=1008, reason="This controller already has a bot. Use a separate bridge port for each agent.")
+            return
         logger.info(f"Mineflayer Bot connected from {websocket.remote_address}")
         self.active_client = websocket
 

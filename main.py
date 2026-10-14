@@ -16,6 +16,7 @@ from agent.graph import MinecraftAgentGraph
 from agent.intents import parse_resource_task, parse_resource_plan, PlanError
 from agent.world_memory import WorldMemory
 from agent.dialogue import classify_message, quantity_reply, knowledge_reply, inventory_reply
+from agent.chat_routing import addressed_command
 
 logging.basicConfig(
     level=logging.INFO,
@@ -63,7 +64,10 @@ async def _run_agent_loop(agent_graph, bridge, memory, chat_only):
         await asyncio.sleep(1)
 
     print("\n✅ Mineflayer Bot connected successfully! Agent is ready for objectives.")
-    print("💡 YOU CAN NOW TALK TO THE AGENT DIRECTLY IN MINECRAFT GAME CHAT!")
+    bot_username = config.mc_username
+    command_players = tuple(config.mc_command_players)
+    print(f"💡 In game chat: @{bot_username} <command> (including status, stop, inventory, memory).")
+    print(f"   Command players: {', '.join(command_players) or '(none configured)'}. Plain chat is ignored.")
     if not chat_only:
         print("   Or type objectives below in this terminal (e.g. 'mine 3 oak logs', 'craft wooden planks').\n")
         print("   Type 'memory' for saved progress or 'memory status' for graph health.\n")
@@ -76,9 +80,9 @@ async def _run_agent_loop(agent_graph, bridge, memory, chat_only):
         if event_payload.get("event") == "chat":
             chat_data = event_payload.get("data", {})
             username = chat_data.get("username")
-            message = chat_data.get("message", "").strip()
-
-            if username == config.mc_username or not message:
+            message = addressed_command(username, chat_data.get("message", ""),
+                                        bot_username=bot_username, allowed_players=command_players)
+            if message is None:
                 return
 
             logger.info(f"💬 [In-Game Chat Command from '{username}']: '{message}'")

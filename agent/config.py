@@ -21,13 +21,16 @@ class Config(BaseModel):
     enable_tavily: bool = Field(default_factory=lambda: os.getenv("ENABLE_TAVILY", "false").lower() == "true")
 
     # WebSocket Bridge Server Settings
-    ws_host: str = Field(default_factory=lambda: os.getenv("WS_HOST", "0.0.0.0"))
+    ws_host: str = Field(default_factory=lambda: os.getenv("WS_HOST", "127.0.0.1"))
     ws_port: int = Field(default_factory=lambda: int(os.getenv("WS_PORT", "8765")))
 
     # Minecraft Server Connection Info (passed to bot if managed)
     mc_host: str = Field(default_factory=lambda: os.getenv("MC_HOST", "localhost"))
     mc_port: int = Field(default_factory=lambda: int(os.getenv("MC_PORT", "25565")))
     mc_username: str = Field(default_factory=lambda: os.getenv("MC_USERNAME", "AI_Agent"))
+    mc_command_players: list[str] = Field(default_factory=lambda: [
+        name.strip() for name in os.getenv("MC_COMMAND_PLAYERS", "Pilot6117").split(",") if name.strip()
+    ])
     mc_version: str = Field(default_factory=lambda: os.getenv("MC_VERSION", "1.20.1"))
 
     # World memory remains local even when the action planner uses Nebius.

@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
 ROOT_DIR="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd -P)"
-PYTHON_BIN="${MINECRAFT_PYTHON:-$HOME/miniforge3/envs/minecraft-agent/bin/python}"
+source "$ROOT_DIR/scripts/runtime.sh"
 cd "$ROOT_DIR"
+PYTHON_BIN="$(minecraft_python)"
 LEARN_BACKEND=minecraft
 LEARN_ARGS=()
 while [ "$#" -gt 0 ]; do

@@ -3,7 +3,7 @@
 set -euo pipefail
 ROOT_DIR="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd -P)"
 cd "$ROOT_DIR"
-PYTHON_BIN="${MINECRAFT_PYTHON:-$HOME/miniforge3/envs/minecraft-agent/bin/python}"
+source "$ROOT_DIR/scripts/runtime.sh"
 case "${1:-}" in
     --help|-h)
         echo "Usage: ./check.sh"
@@ -14,7 +14,7 @@ case "${1:-}" in
     *) echo "Usage: ./check.sh" >&2; exit 2 ;;
 esac
 [ "$#" -le 1 ] || { echo "Usage: ./check.sh" >&2; exit 2; }
-[ -x "$PYTHON_BIN" ] || { echo "Missing minecraft-agent Python; set MINECRAFT_PYTHON." >&2; exit 1; }
+PYTHON_BIN="$(minecraft_python)"
 command -v node >/dev/null 2>&1 && command -v npm >/dev/null 2>&1 || {
     echo "Node.js and npm are required." >&2; exit 1;
 }
@@ -26,13 +26,8 @@ echo "Python contracts"
 "$PYTHON_BIN" -m unittest discover -s tests -v
 echo "Mineflayer tool contracts"
 npm test --prefix bot
-node tests/test_grounding.js
-node tests/test_region_inspection.js
-node tests/test_construction.js
-node tests/test_construction_controller.js
-node tests/test_operation_progress.js
 echo "Shell and JavaScript syntax"
-for script in start.sh practice.sh learn.sh rl.sh check.sh scripts/untrack-runtime.sh server/start.sh server-plugins/*/build.sh; do
+for script in start.sh start-agent.sh practice.sh learn.sh rl.sh check.sh scripts/*.sh server/start.sh server-plugins/*/build.sh; do
     bash -n "$script"
 done
 for source in bot/*.js; do node --check "$source"; done

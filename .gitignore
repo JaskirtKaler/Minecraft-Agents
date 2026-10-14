@@ -1,5 +1,7 @@
 # Environment variables
 .env
+docker.env
+docker.*.env
 
 # Node.js dependencies
 node_modules/
@@ -40,6 +42,13 @@ server/world/
 server/world_nether/
 server/world_the_end/
 server/crash-reports/
+server/usercache.json
+server/version_history.json
+server/plugins/bStats/
+server/plugins/spark/tmp/
+
+# Docker data backups are private runtime data too.
+agent-data-backup/
 
 # Local policy runs and weights belong under ignored data/, not source.
 *.egg-info/

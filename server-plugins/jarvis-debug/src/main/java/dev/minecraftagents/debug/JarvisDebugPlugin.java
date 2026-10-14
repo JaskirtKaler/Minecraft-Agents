@@ -61,7 +61,7 @@ public final class JarvisDebugPlugin extends JavaPlugin implements Listener {
     @Override
     public boolean onCommand(CommandSender sender, Command command, String label, String[] args) {
         if (!(sender instanceof Player viewer)) {
-            sender.sendMessage("Open /jarvisinventory in Minecraft. Chat 'inventory' also shows live bot items.");
+            sender.sendMessage("Open /jarvisinventory in Minecraft. Chat '@" + botUsername + " inventory' also shows live bot items.");
         } else if (!allowed(viewer)) {
             viewer.sendMessage("Inventory inspection is limited to configured local viewers and server operators.");
         } else if (args.length != 0) {

@@ -290,6 +290,10 @@ bot.on('end', (reason) => {
     botEnded = true;
     clearStateUpdateTimer();
     clearReconnectTimer();
+    // Let the supervisor restart a disconnected agent and close stale bridge state.
+    if (wsClient) wsClient.close();
+    process.exitCode = 1;
+    setTimeout(() => process.exit(1), 250).unref();
 });
 
 /**

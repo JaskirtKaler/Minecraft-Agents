@@ -21,6 +21,8 @@ class LearningDispatchTests(unittest.TestCase):
         self.fixture.mkdir()
         self.launcher = self.fixture / "learn.sh"
         shutil.copy2(ROOT / "learn.sh", self.launcher)
+        (self.fixture / "scripts").mkdir()
+        shutil.copy2(ROOT / "scripts/runtime.sh", self.fixture / "scripts/runtime.sh")
         self.capture = Path(self.temp.name) / "captured argv.bin"
         self.cwd_capture = Path(self.temp.name) / "captured cwd.txt"
         self.fake_python = Path(self.temp.name) / "fake python executable"

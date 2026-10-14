@@ -1,0 +1,36 @@
+name: minecraft-agent
+services:
+  agent:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: minecraft-agents-agent:local
+    init: true
+    restart: unless-stopped
+    stop_grace_period: 45s
+    env_file:
+      - ${AGENT_ENV_FILE:-docker.env}
+    environment:
+      # One bot/controller pair per container; only outbound LAN/API connections.
+      WS_HOST: 127.0.0.1
+      WS_PORT: "8765"
+      WS_URL: ws://127.0.0.1:8765
+      ENABLE_VIEWER: "false"
+      MEMORY_ENABLED: "true"
+      MEMORY_DIR: /app/data/memory
+      LEARNING_DIR: /app/data/learning
+      # Keep PID locks/readiness out of the persistent memory volume.
+      MINECRAFT_LAUNCH_LOCK_DIR: /tmp/minecraft-agent.lock
+      MINECRAFT_READY_FILE: /tmp/minecraft-agent.ready
+    volumes:
+      - agent-data:/app/data
+    tmpfs:
+      - /tmp:mode=1777
+    healthcheck:
+      test: [CMD, python, scripts/docker_healthcheck.py]
+      interval: 30s
+      timeout: 5s
+      start_period: 90s
+      retries: 3
+volumes:
+  agent-data:

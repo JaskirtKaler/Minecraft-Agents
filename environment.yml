@@ -1,0 +1,14 @@
+# Agent runtime for macOS/Linux. On Windows, create it inside WSL 2 (Ubuntu).
+# Run from the repository root: conda env create -f environment.yml
+# Python package pins stay in requirements.txt; bot packages use npm ci --prefix bot.
+name: minecraft-agent
+channels:
+  - conda-forge
+  - nodefaults
+dependencies:
+  - python=3.12
+  - pip
+  # The committed Mineflayer version requires Node.js >=22; includes npm.
+  - nodejs=22
+  - pip:
+      - -r requirements.txt

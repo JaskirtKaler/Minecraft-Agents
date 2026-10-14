@@ -1,0 +1,23 @@
+# Allow only the runtime source and manifests into the build context.
+**
+!Dockerfile
+!requirements.txt
+!main.py
+!start.sh
+!start-agent.sh
+!agent/
+!agent/**
+!bot/
+!bot/**
+!shared/
+!shared/**
+!scripts/
+!scripts/docker_healthcheck.py
+!scripts/__init__.py
+!scripts/launch_checks.py
+!scripts/runtime.sh
+bot/node_modules/
+**/__pycache__/
+**/*.pyc
+**/.env
+**/.env.*

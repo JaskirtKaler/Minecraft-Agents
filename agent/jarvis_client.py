@@ -7,7 +7,6 @@ crafting recipes, and self-correction assistance with zero external API costs.
 import logging
 import httpx
 import os
-from agent.config import config
 
 logger = logging.getLogger("JarvisRelay")
 

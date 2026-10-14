@@ -1,48 +1,22 @@
-#!/bin/bash
-cd "$(dirname "$0")"
-
-# Locate Java
-JAVA_CMD="${MINECRAFT_JAVA:-java}"
-if ! command -v "$JAVA_CMD" &> /dev/null; then
-    if [ -x "/Library/Java/JavaVirtualMachines/jdk-21.jdk/Contents/Home/bin/java" ]; then
-        JAVA_CMD="/Library/Java/JavaVirtualMachines/jdk-21.jdk/Contents/Home/bin/java"
-    elif [ -x "$JAVA_HOME/bin/java" ]; then
-        JAVA_CMD="$JAVA_HOME/bin/java"
-    fi
+#!/usr/bin/env bash
+# Server-only bootstrap using the bundled Purpur runtime.
+set -euo pipefail
+SERVER_DIR="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd -P)"
+source "$SERVER_DIR/../scripts/runtime.sh"
+cd "$SERVER_DIR"
+if [ "${1:-}" = --help ] || [ "${1:-}" = -h ]; then
+    echo "Usage: ./server/start.sh [Minecraft server arguments]"
+    echo "Starts only the bundled Minecraft server. Use root ./start.sh for server + agent."
+    exit 0
 fi
-
-JAR_NAME="server.jar"
-PRIMARY_URL="https://api.purpurmc.org/v2/purpur/1.20.1/latest/download"
-FALLBACK_URL="https://piston-data.mojang.com/v1/objects/84194a2f286ef7c14ed7ce0090dba59902951553/server.jar"
-
-if [ ! -f "$JAR_NAME" ] || [ $(wc -c < "$JAR_NAME") -lt 1000000 ]; then
-    echo "⬇️ Downloading Minecraft 1.20.1 server jar (~45MB)..."
-    rm -f "$JAR_NAME"
-    curl -L -f -o "$JAR_NAME" "$PRIMARY_URL"
-    if [ $? -ne 0 ] || [ $(wc -c < "$JAR_NAME") -lt 1000000 ]; then
-        echo "⚠️ Primary download failed, trying official Mojang server fallback..."
-        curl -L -f -o "$JAR_NAME" "$FALLBACK_URL"
-    fi
-    if [ $? -ne 0 ] || [ $(wc -c < "$JAR_NAME") -lt 1000000 ]; then
-        echo "❌ Failed to download server.jar. Please check your network connection."
-        exit 1
-    fi
-    echo "✅ Server download complete."
-fi
-
-# Ensure ViaVersion & ViaBackwards plugins exist for multi-version support
-mkdir -p plugins
-if [ ! -f "plugins/ViaVersion.jar" ]; then
-    echo "⬇️ Installing ViaVersion (Multi-version client compatibility plugin)..."
-    curl -L -f -o plugins/ViaVersion.jar "https://github.com/ViaVersion/ViaVersion/releases/download/5.12.0/ViaVersion-5.12.0.jar"
-fi
-if [ ! -f "plugins/ViaBackwards.jar" ]; then
-    echo "⬇️ Installing ViaBackwards plugin..."
-    curl -L -f -o plugins/ViaBackwards.jar "https://github.com/ViaVersion/ViaBackwards/releases/download/5.12.0/ViaBackwards-5.12.0.jar"
-fi
-
-# Ensure eula.txt is accepted
-echo "eula=true" > eula.txt
-
-echo "🚀 Starting Minecraft Server with ViaVersion (online-mode=false)..."
-exec "$JAVA_CMD" -Xms2G -Xmx2G -jar "$JAR_NAME" nogui "$@"
+[ -s server.jar ] || { echo "Missing bundled server/server.jar. Restore it from the repository." >&2; exit 1; }
+for plugin in ViaVersion ViaBackwards; do
+    [ -s "plugins/$plugin.jar" ] || { echo "Missing bundled $plugin.jar. Restore it from the repository." >&2; exit 1; }
+done
+grep -Eiq '^[[:space:]]*eula[[:space:]]*=[[:space:]]*true[[:space:]]*$' eula.txt 2>/dev/null || {
+    echo "Review Minecraft's EULA and accept it yourself in server/eula.txt before launching." >&2
+    exit 1
+}
+JAVA_CMD="$(minecraft_java)"
+echo "Starting Purpur 1.20.1 with the existing server configuration..."
+exec "$JAVA_CMD" -Xms2G -Xmx2G -jar server.jar --nogui "$@"

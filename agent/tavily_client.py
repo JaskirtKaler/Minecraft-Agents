@@ -4,7 +4,6 @@ Used for RAG (Retrieval Augmented Generation) to fetch Minecraft recipes and mec
 """
 
 import logging
-from typing import Dict, Any, Optional
 import httpx
 from agent.config import config
 

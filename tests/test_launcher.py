@@ -2,7 +2,7 @@
 
 The fixture intentionally never starts a real Minecraft server, controller,
 bot, Ollama instance, or TCP listener.  Small executable stand-ins model the
-launcher contract instead: Python handles its two heredoc call shapes and
+launcher contract instead: Python handles preflight module commands and
 port probes; Java consumes the server FIFO; and Node emits the bot markers.
 """
 
@@ -44,6 +44,9 @@ class LauncherIntegrationTests(unittest.TestCase):
         self._processes: list[tuple[subprocess.Popen[str], object]] = []
 
         shutil.copy2(LAUNCHER, self.root / "start.sh")
+        shutil.copy2(PROJECT_ROOT / "start-agent.sh", self.root / "start-agent.sh")
+        (self.root / "scripts").mkdir()
+        shutil.copy2(PROJECT_ROOT / "scripts/runtime.sh", self.root / "scripts/runtime.sh")
         (self.root / "start.sh").chmod((self.root / "start.sh").stat().st_mode | stat.S_IXUSR)
         (self.root / ".env").write_text("LOCAL_TEST_ONLY=1\n", encoding="utf-8")
         (self.root / "main.py").write_text("# not executed by fake python\n", encoding="utf-8")
@@ -61,6 +64,11 @@ class LauncherIntegrationTests(unittest.TestCase):
         self._write_fake_tools()
 
         self.env = os.environ.copy()
+        # Other test modules import Config, whose dotenv loader populates the
+        # parent environment. Keep these process fixtures independent of it.
+        for key in ("MC_HOST", "MC_PORT", "MC_USERNAME", "MC_BIND_HOST", "WS_PORT", "MINECRAFT_AGENT_ONLY",
+                    "MEMORY_DIR", "LEARNING_DIR", "MINECRAFT_LAUNCH_LOCK_DIR", "MINECRAFT_READY_FILE"):
+            self.env.pop(key, None)
         self.env.update(
             {
                 "MINECRAFT_PYTHON": str(self.python),
@@ -103,11 +111,11 @@ class LauncherIntegrationTests(unittest.TestCase):
             state=${FAKE_STATE_DIR:?}
             event() { printf '%s\n' "$1" >> "$state/events.log"; }
 
-            if [ "${1:-}" = "-" ]; then
-                payload=$(cat)
-                if [ "$#" -gt 1 ]; then
-                    case "$2" in
+            if [ "${1:-}" = "-m" ] && [ "${2:-}" = scripts.launch_checks ]; then
+                if [ "${3:-}" = port ]; then
+                    case "$4" in
                         "$FAKE_MC_PORT")
+                            [ "${MINECRAFT_AGENT_ONLY:-0}" = 1 ] && [ "${FAKE_SERVER_AVAILABLE:-1}" = 1 ] && exit 0
                             [ "${FAKE_OCCUPIED:-}" = "mc" ] && exit 0
                             [ -f "$state/mc.ready" ] && exit 0
                             exit 1
@@ -121,16 +129,20 @@ class LauncherIntegrationTests(unittest.TestCase):
                     esac
                 fi
 
-                # The launcher has one other Python heredoc for /api/tags.
-                # It is unused when NEEDS_OLLAMA=0, but modeling it keeps this
-                # stand-in honest about both launcher call shapes.
-                case "$payload" in
-                    *"/api/tags"*) printf '%s\n' 'Configured local models are installed.' ;;
-                    *)
+                case "${3:-}" in
+                    models) printf '%s\n' 'Configured local models are installed.' ;;
+                    settings)
                         printf 'MC_PORT=%s\n' "$FAKE_MC_PORT"
-                        printf 'WS_PORT=%s\n' "$FAKE_WS_PORT"
+                        printf 'MC_HOST=%s\n' "${MC_HOST:-127.0.0.1}"
+                        printf 'MC_BIND_HOST=%s\n' "${MC_BIND_HOST:-0.0.0.0}"
+                        printf "LAN_ADDRESSES='192.168.1.12:%s'\n" "$FAKE_MC_PORT"
+                        printf 'WS_PORT=%s\n' "${WS_PORT:-$FAKE_WS_PORT}"
                         printf '%s\n' 'MC_WORLD_ID=fixture-world'
-                        printf '%s\n' 'BOT_USERNAME=FixtureBot'
+                        printf 'BOT_USERNAME=%s\n' "${MC_USERNAME:-FixtureBot}"
+                        printf 'AGENT_KEY=%s\n' "$(printf '%s' "${MC_USERNAME:-FixtureBot}" | tr '[:upper:]' '[:lower:]')"
+                        printf '%s\n' 'COMMAND_PLAYERS=Pilot6117'
+                        printf '%s\n' 'MEMORY_DIR=data/agents/fixturebot/memory'
+                        printf '%s\n' 'LEARNING_DIR=data/agents/fixturebot/learning'
                         printf '%s\n' 'NEEDS_OLLAMA=0'
                         ;;
                 esac
@@ -138,6 +150,7 @@ class LauncherIntegrationTests(unittest.TestCase):
             fi
 
             if [ "${1:-}" = "-u" ]; then
+                printf '%s\n' "$WS_HOST:$WS_PORT" > "$state/controller-address"
                 event controller-start
                 if [ "${FAKE_CONTROLLER_MODE:-ready}" = "exit" ]; then
                     printf '%s\n' 'simulated controller failure' >&2
@@ -173,6 +186,7 @@ class LauncherIntegrationTests(unittest.TestCase):
             esac
 
             event server-start
+            printf '%s\n' "$@" > "$state/server-arguments"
             if [ "${FAKE_SERVER_MODE:-ready}" = "exit" ]; then
                 printf '%s\n' 'simulated server failure' >&2
                 exit 22
@@ -202,6 +216,7 @@ class LauncherIntegrationTests(unittest.TestCase):
             state=${FAKE_STATE_DIR:?}
             event() { printf '%s\n' "$1" >> "$state/events.log"; }
             event bot-start
+            printf '%s\n' "$MC_HOST:$MC_PORT" "$WS_URL" > "$state/bot-addresses"
             if [ "${FAKE_NODE_MODE:-ready}" = "exit" ]; then
                 printf '%s\n' 'simulated bot failure' >&2
                 exit 24
@@ -213,13 +228,13 @@ class LauncherIntegrationTests(unittest.TestCase):
             ''',
         )
 
-    def _launch(self, *args: str, **overrides: str) -> tuple[subprocess.Popen[str], Path]:
+    def _launch(self, *args: str, launcher="start.sh", **overrides: str) -> tuple[subprocess.Popen[str], Path]:
         env = self.env.copy()
         env.update(overrides)
         output = self.root / f"launcher-{len(self._processes)}.log"
         stream = output.open("w", encoding="utf-8")
         process = subprocess.Popen(
-            ["bash", str(self.root / "start.sh"), *args],
+            ["bash", str(self.root / launcher), *args],
             cwd=self.root,
             env=env,
             stdout=stream,
@@ -276,7 +291,13 @@ class LauncherIntegrationTests(unittest.TestCase):
         process, output = self._launch()
         startup = self._wait_for_text(process, output, "READY — join Minecraft Java")
 
-        self.assertIn("1/3 Starting Minecraft on 127.0.0.1:25566", startup)
+        self.assertIn("1/3 Starting Minecraft on 0.0.0.0:25566", startup)
+        self.assertIn("Home network players/agents: 192.168.1.12:25566", startup)
+        server_args = (self.state / "server-arguments").read_text().splitlines()
+        self.assertEqual(server_args[server_args.index("--host") + 1], "0.0.0.0")
+        self.assertEqual((self.state / "controller-address").read_text().strip(), "127.0.0.1:8765")
+        self.assertEqual((self.state / "bot-addresses").read_text().splitlines(),
+                         ["127.0.0.1:25566", "ws://127.0.0.1:8765"])
         self.assertIn("2/3 Starting Python controller with persistent world memory", startup)
         self.assertIn("3/3 Joining the Mineflayer agent", startup)
         self.assertIn("Agent: FixtureBot. In game chat", startup)
@@ -353,6 +374,81 @@ class LauncherIntegrationTests(unittest.TestCase):
         self.assertEqual(code, 0, text)
         self.assertEqual(self._events(), [])
         self.assertFalse((self.root / "data").exists())
+
+    def test_agent_only_needs_no_server_files_or_java_and_stops_only_its_pair(self):
+        shutil.rmtree(self.root / "server")
+        self.java.unlink()
+        self._add_fake_inventory_builder()
+        process, output = self._launch("--host", "192.168.50.63", "--name", "AI_Agent_2",
+                                       launcher="start-agent.sh")
+        startup = self._wait_for_text(process, output, "READY — agent AI_Agent_2 joined")
+        self.assertIn("192.168.50.63:25566", startup)
+        self.assertIn("@AI_Agent_2", startup)
+        self.assertEqual(self._events(), ["controller-start", "bot-start"])
+        self.assertEqual((self.state / "bot-addresses").read_text().splitlines(),
+                         ["192.168.50.63:25566", "ws://127.0.0.1:8765"])
+        self.assertTrue((self.root / "data/run/agent-ai_agent_2.lock/pid").exists())
+        process.send_signal(signal.SIGTERM)
+        code, stopped = self._wait_for_exit(process, output)
+        self.assertEqual(code, 143, stopped)
+        self.assertEqual(self._events(), ["controller-start", "bot-start", "bot-term", "controller-term"])
+        self.assertFalse((self.root / "data/run/agent-ai_agent_2.lock").exists())
+        self.assertNotIn("Saving and stopping Minecraft", stopped)
+
+    def test_agent_only_check_requires_remote_server_and_free_local_bridge(self):
+        for overrides, expected in (({"FAKE_SERVER_AVAILABLE": "0"}, "Cannot reach Minecraft"),
+                                    ({"FAKE_OCCUPIED": "ws"}, "Controller port")):
+            with self.subTest(overrides=overrides):
+                process, output = self._launch("--host", "192.168.50.63", "--name", "AI_Agent_2", "--check",
+                                               launcher="start-agent.sh", **overrides)
+                code, text = self._wait_for_exit(process, output)
+                self.assertEqual(code, 1, text)
+                self.assertIn(expected, text)
+                self.assertEqual(self._events(), [])
+        process, output = self._launch("--host", "192.168.50.63", "--name", "AI_Agent_2", "--check",
+                                       launcher="start-agent.sh")
+        code, text = self._wait_for_exit(process, output)
+        self.assertEqual(code, 0, text)
+        self.assertIn("Agent AI_Agent_2 will join 192.168.50.63", text)
+        self.assertEqual(self._events(), [])
+
+    def test_agent_bot_failure_cleans_up_controller_without_server_stop(self):
+        process, output = self._launch("--name", "AI_Agent_2", launcher="start-agent.sh", FAKE_NODE_MODE="exit")
+        code, text = self._wait_for_exit(process, output)
+        self.assertEqual(code, 1, text)
+        self.assertIn("Mineflayer bot exited before it was ready", text)
+        self.assertEqual(self._events(), ["controller-start", "bot-start", "controller-term"])
+
+    def test_agent_cli_rejects_missing_values(self):
+        process, output = self._launch("--host", launcher="start-agent.sh")
+        code, text = self._wait_for_exit(process, output)
+        self.assertEqual(code, 2)
+        self.assertIn("Missing value for --host", text)
+        self.assertEqual(self._events(), [])
+
+    def test_container_runtime_markers_are_ready_then_removed_without_touching_memory(self):
+        persistent = self.root / "persistent agent data"
+        persistent.mkdir()
+        memory = persistent / "memory.sqlite3"
+        memory.write_bytes(b"previous world memory")
+        runtime = self.root / "ephemeral runtime"
+        runtime.mkdir()
+        lock = runtime / "agent.lock"
+        ready = runtime / "agent.ready"
+        process, output = self._launch("--name", "AI_Agent_2", launcher="start-agent.sh",
+                                       MINECRAFT_LAUNCH_LOCK_DIR=str(lock), MINECRAFT_READY_FILE=str(ready))
+        self._wait_for_text(process, output, "READY — agent AI_Agent_2 joined")
+        self.assertTrue(lock.is_dir())
+        pids = ready.read_text().splitlines()
+        self.assertEqual(len(pids), 3)
+        for pid in pids:
+            os.kill(int(pid), 0)
+        process.send_signal(signal.SIGTERM)
+        code, text = self._wait_for_exit(process, output)
+        self.assertEqual(code, 143, text)
+        self.assertFalse(ready.exists())
+        self.assertFalse(lock.exists())
+        self.assertEqual(memory.read_bytes(), b"previous world memory")
 
 
 if __name__ == "__main__":

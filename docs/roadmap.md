@@ -10,7 +10,7 @@ The October 8 implementation pass preserves uncommitted training-mode changes an
 
 ## Milestone 1 Repository and observation foundation
 
-- Keep short launch instructions in the root README and retain the full operations guide under `docs/`.
+- Keep short launch instructions in the root README and keep setup, architecture, practice, and validation guides under `docs/`.
 - Ignore generated runtime artifacts and prepare a scoped index-cleanup script that preserves local files. The user must run the apply step because this workspace cannot write the Git index.
 - Provide one offline verification command using the `minecraft-agent` Conda environment.
 - Add a versioned Mineflayer observation request with local terrain, explicit unknown cells, movement, inventory details, and relative landmarks.

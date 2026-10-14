@@ -26,6 +26,10 @@ class RepositoryCleanupTests(unittest.TestCase):
         self.files = {'server/world/region/fixture.mca': b'private world bytes',
                       'server/logs/fixture.log': b'private gameplay log',
                       'server/libraries/fixture.jar': b'generated library',
+                      'server/usercache.json': b'player cache',
+                      'server/version_history.json': b'version cache',
+                      'server/plugins/bStats/config.yml': b'generated telemetry identity',
+                      'server/plugins/spark/tmp/about.txt': b'temporary plugin data',
                       'server/server.properties': b'local configuration'}
         for path, content in self.files.items():
             target = self.root / path
@@ -57,6 +61,9 @@ class RepositoryCleanupTests(unittest.TestCase):
         self.assertNotIn('server/world/region/fixture.mca', tracked)
         self.assertNotIn('server/logs/fixture.log', tracked)
         self.assertNotIn('server/libraries/fixture.jar', tracked)
+        for path in self.files:
+            if path != 'server/server.properties':
+                self.assertNotIn(path, tracked)
         for path, content in self.files.items():
             self.assertEqual((self.root / path).read_bytes(), content)
         repeat = self.script('--apply')

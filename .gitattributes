@@ -1,0 +1,4 @@
+# Bash entrypoints must retain Unix line endings in Windows clones.
+*.sh text eol=lf
+*.py text eol=lf
+Dockerfile text eol=lf
