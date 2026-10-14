@@ -7,7 +7,7 @@ import unittest
 from unittest.mock import AsyncMock
 
 from agent.bridge import MineflayerBridge
-from agent.construction_checks import construction_contract, action_conflict, spatial_cells, verified_final_cell_change
+from agent.construction_checks import construction_contract, action_conflict, rejected_action, spatial_cells, verified_final_cell_change
 from agent.experience import ExperienceLibrary
 from agent.tool_agent import ModelToolAgent
 from practice.construction import SimulatedConstructionBridge, make_task, position, grade_task
@@ -53,6 +53,89 @@ class ConstructionChecksTests(unittest.TestCase):
         self.assertIsNone(action_conflict(action, [self.goal], []))
         self.assertIsNone(action_conflict({'name': 'place_batch', 'args': {'item': 'dirt',
             'positions': [action['args']['position']]}}, [{'kind': 'inventory_at_least', 'item': 'dirt', 'count': 1}], []))
+
+    def test_single_repeated_placement_rejected_with_exact_remaining_facts(self):
+        action = {'name': 'place', 'args': {'item': 'cobblestone', 'position': {'x': -3, 'y': 64, 'z': -8}}}
+        observed = {'-3,64,-8': 'cobblestone', '-2,64,-8': 'air', '-1,64,-8': 'air'}
+        evidence = [{'goal': self.goal, 'observed': observed}]
+        original = copy.deepcopy((action, evidence))
+        failure = action_conflict(action, [self.goal], evidence)
+        self.assertEqual(failure['error_code'], 'CONSTRUCTION_NO_OP')
+        self.assertEqual(failure['observed'], failure['desired'])
+        self.assertTrue(failure['known_no_op'])
+        self.assertEqual(failure['remaining_facts']['progress']['known_remaining_cells'], 1)
+        missing = failure['remaining_facts']['categories']['missing_nonair']['samples']
+        self.assertEqual([fact['position'] for fact in missing], [{'x': -1, 'y': 64, 'z': -8}])
+        self.assertEqual((action, evidence), original)
+        outcome = rejected_action(failure)
+        self.assertEqual(outcome['data']['error_code'], 'CONSTRUCTION_NO_OP')
+        self.assertFalse(outcome['success'])
+        self.assertFalse(outcome['verified'])
+        self.assertNotIn('action', outcome['data'])
+
+    def test_mixed_placement_batch_is_rejected_whole_never_filtered(self):
+        action = {'name': 'place_batch', 'args': {'item': 'cobblestone', 'positions': [
+            {'x': -1, 'y': 64, 'z': -8}, {'x': -3, 'y': 64, 'z': -8}]}}
+        original = copy.deepcopy(action)
+        evidence = [{'goal': self.goal, 'observed': {'-3,64,-8': {'name': 'cobblestone', 'loaded': True}, '-1,64,-8': 'air'}}]
+        failure = action_conflict(action, [self.goal], evidence)
+        self.assertEqual(failure['position'], action['args']['positions'][1])
+        self.assertTrue(failure['whole_batch_rejected'])
+        self.assertEqual(action, original)
+        self.assertEqual(len(action['args']['positions']), 2)
+        action['args']['positions'] = [action['args']['positions'][0]]
+        self.assertIsNone(action_conflict(action, [self.goal], evidence), 'The model may choose a new useful batch itself.')
+
+    def test_digging_known_air_variants_is_rejected_before_clear_batch(self):
+        for name in ('dig', 'dig_batch'):
+            for air in ('air', 'cave_air', 'void_air'):
+                with self.subTest(tool=name, air=air):
+                    p = {'x': -2, 'y': 64, 'z': -8}
+                    args = {'position': p} if name == 'dig' else {'positions': [{'x': -3, 'y': 64, 'z': -8}, p]}
+                    action = {'name': name, 'args': args}
+                    original = copy.deepcopy(action)
+                    evidence = [{'goal': self.goal, 'observed': {'-3,64,-8': 'dirt', '-2,64,-8': air, '-1,64,-8': 'air'}}]
+                    failure = action_conflict(action, [self.goal], evidence)
+                    self.assertEqual(failure['error_code'], 'CONSTRUCTION_NO_OP')
+                    self.assertEqual(failure['observed'], air)
+                    self.assertEqual(failure['position'], p)
+                    self.assertEqual(action, original)
+
+    def test_unknown_unloaded_conflicting_and_baseline_only_cells_are_not_false_noops(self):
+        p = {'x': -3, 'y': 64, 'z': -8}
+        place = {'name': 'place', 'args': {'position': p, 'item': 'cobblestone'}}
+        dig = {'name': 'dig', 'args': {'position': p}}
+        for actual in ('unknown', None, {'name': 'air', 'loaded': False}, {'name': 'cobblestone', 'loaded': False}):
+            evidence = [{'goal': self.goal, 'before': {'-3,64,-8': 'cobblestone'}, 'observed': {'-3,64,-8': actual}}]
+            self.assertIsNone(action_conflict(place, [self.goal], evidence))
+            self.assertIsNone(action_conflict(dig, [self.goal], evidence))
+        self.assertIsNone(action_conflict(place, [self.goal], [{'goal': self.goal, 'before': {'-3,64,-8': 'cobblestone'}}]))
+        block = {'kind': 'block_is', 'block': 'cobblestone', 'position': p}
+        evidence = [{'goal': self.goal, 'observed': {'-3,64,-8': 'cobblestone'}}, {'goal': block, 'observed': 'air'}]
+        self.assertIsNone(action_conflict(place, [self.goal, block], evidence))
+        self.assertIsNone(action_conflict(dig, [self.goal, block], evidence))
+
+    def test_contradiction_precedes_noop_and_receipt_backed_repair_is_not_rewritten(self):
+        action = {'name': 'place_batch', 'args': {'item': 'cobblestone', 'positions': [
+            {'x': -3, 'y': 64, 'z': -8}, {'x': -2, 'y': 64, 'z': -8}]}}
+        evidence = [{'goal': self.goal, 'observed': {'-3,64,-8': 'cobblestone', '-2,64,-8': 'air'}}]
+        failure = action_conflict(action, [self.goal], evidence)
+        self.assertEqual(rejected_action(failure)['data']['error_code'], 'CONSTRUCTION_GOAL_CONFLICT')
+        repair = {'name': 'repair_batch', 'args': {'positions': [action['args']['positions'][1]]}}
+        original = copy.deepcopy(repair)
+        self.assertIsNone(action_conflict(repair, [self.goal], evidence))
+        self.assertEqual(repair, original, 'The ledger/executor, not this fact helper, authorizes repair.')
+
+    def test_single_place_does_not_infer_seed_to_crop_mapping_or_change_prerequisites(self):
+        p = {'x': 1, 'y': 70, 'z': -5}
+        goal = {'kind': 'block_is', 'block': 'wheat', 'position': p}
+        action = {'name': 'place', 'args': {'item': 'wheat_seeds', 'position': p}}
+        self.assertIsNone(action_conflict(action, [self.goal, goal], [{'goal': goal, 'observed': 'air'}]))
+        failure = action_conflict(action, [self.goal, goal], [{'goal': goal, 'observed': 'wheat'}])
+        self.assertEqual(failure['desired'], failure['observed'])
+        self.assertEqual(failure['proposed'], 'wheat_seeds')
+        station = {'name': 'place', 'args': {'item': 'crafting_table', 'position': {'x': 4, 'y': 70, 'z': -5}}}
+        self.assertIsNone(action_conflict(station, [self.goal], []))
 
     def test_own_repair_can_prove_air_change_without_rewriting_matching_baseline(self):
         p = {'x': -2, 'y': 64, 'z': -8}

@@ -37,7 +37,8 @@ class MinecraftAgentGraph:
         self.tavily = TavilySearchClient()
         self.jarvis = JarvisClient()
         self.graph = self._build_graph()
-        self.tool_agent = ModelToolAgent(bridge, self.nebius, memory) if config.task_planner == 'model' else None
+        self.tool_agent = ModelToolAgent(bridge, self.nebius, memory,
+            knowledge=self.tavily if config.enable_tavily else None) if config.task_planner == 'model' else None
 
     def _build_graph(self):
         builder = StateGraph(AgentState)
@@ -103,10 +104,11 @@ class MinecraftAgentGraph:
             # Ask Jarvis locally (zero external API cost)
             jarvis_advice = await self.jarvis.query_knowledge(query, context=error_trace)
             
-            # Optional Tavily fallback if enabled
+            # External research belongs to the model-selected, budgeted
+            # knowledge_lookup tool. Never export a whole objective/error
+            # trace from this legacy path merely because it mentions building.
             if config.enable_tavily:
-                tavily_res = await self.tavily.search_minecraft_wiki(query)
-                jarvis_advice += f"\n{tavily_res}"
+                logger.info('Legacy automatic web fallback skipped; use the model knowledge_lookup tool for a concrete missing mechanic.')
 
             state["rag_info"] = jarvis_advice.strip()
             logger.info("Retrieved strategy & recipe guidance from Jarvis.")

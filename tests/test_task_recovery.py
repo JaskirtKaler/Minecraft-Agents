@@ -155,7 +155,10 @@ class RecoveryTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result['data']['requested_quantities'], requirements)
         self.assertTrue(all(call.args[0]['name'] == 'container' for call in bridge.execute_tool.call_args_list))
         interpretation_prompt = json.loads(client.generate_response.call_args_list[1].args[0][1]['content'])
-        self.assertEqual(set(interpretation_prompt), {'objective', 'requester'})
+        self.assertEqual(set(interpretation_prompt), {'objective', 'requester', 'quantity_source_facts'})
+        self.assertNotIn('goals', interpretation_prompt)
+        self.assertNotIn('proposed_goals', interpretation_prompt)
+        self.assertEqual([a['count'] for a in interpretation_prompt['quantity_source_facts']['explicit_amounts']], [24, 24])
 
     async def test_overshoot_is_rejected_then_model_selects_remaining_quantity(self):
         p = {'x': 2, 'y': 64, 'z': 3}

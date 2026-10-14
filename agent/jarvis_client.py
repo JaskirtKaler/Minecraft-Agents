@@ -13,7 +13,7 @@ logger = logging.getLogger("JarvisRelay")
 class JarvisClient:
     def __init__(self):
         self.endpoint = os.getenv("JARVIS_ENDPOINT", "http://localhost:11434/api/chat")
-        self.model = os.getenv("JARVIS_MODEL", "gemma4:26b")
+        self.model = os.getenv("JARVIS_MODEL", "nemotron-3.5-lightning:30b-mlx")
         logger.info(f"Jarvis Relay initialized -> {self.endpoint} (Model: {self.model})")
 
     async def query_knowledge(self, query: str, context: str = "") -> str:

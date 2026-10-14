@@ -10,7 +10,7 @@ COUNT = {"type": "integer", "minimum": 1, "maximum": 2304}
 POSITION = object_schema({axis: {"type": "integer"} for axis in ("x", "y", "z")}, ("x", "y", "z"))
 TOOL_COUNT = {"type": "integer", "minimum": 1, "maximum": 64}
 REGION = object_schema({"min": POSITION, "max": POSITION, "block": IDENTIFIER,
-                        "mode": {"enum": ["solid", "perimeter_xz"]}},
+                        "mode": {"enum": ["solid", "perimeter_xz", "shell_3d"]}},
                        ("min", "max", "block", "mode"))
 REGION_EXCEPTION = object_schema({"position": POSITION, "block": IDENTIFIER}, ("position", "block"))
 
@@ -22,6 +22,10 @@ def tool_schema(tool_names):
         fields, required = {}, []
         if name == 'inspect':
             fields = {'item': IDENTIFIER, 'position': POSITION}
+        elif name == 'knowledge_lookup':
+            fields = {'query': {'type': 'string', 'minLength': 8, 'maxLength': 240},
+                      'missing_fact': {'type': 'string', 'minLength': 12, 'maxLength': 96}}
+            required = ['query', 'missing_fact']
         elif name == 'inspect_region':
             fields = {'min': POSITION, 'max': POSITION}
             required = ['min', 'max']
@@ -127,6 +131,16 @@ def decision_schema(tool_names, batch_size=4, include_goals=True):
         done['goals'] = properties['goals']
     branches.append(object_schema(done, ('type',)))
     return {'oneOf': branches}
+
+
+def goal_declaration_schema():
+    """A model-authored correction declares outcomes only, never an action plan."""
+    goals = decision_schema(set())['oneOf'][0]['properties']['goals']
+    plan = object_schema({'type': {'const': 'plan'}, 'goals': goals,
+                          'reason': {'type': 'string', 'maxLength': 240}}, ('type', 'goals', 'reason'))
+    blocked = object_schema({'type': {'const': 'blocked'}, 'message': {'type': 'string', 'maxLength': 600}},
+                            ('type', 'message'))
+    return {'oneOf': [plan, blocked]}
 
 
 LESSON_SCHEMA = object_schema({"lesson": {"type": "string", "maxLength": 1500}}, ("lesson",))

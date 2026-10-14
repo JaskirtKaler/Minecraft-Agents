@@ -180,7 +180,7 @@ class ConstructionLoopTests(unittest.IsolatedAsyncioTestCase):
                 self.assertIn('UNACCEPTED DISCOVERY DRAFT', payload['construction_knowledge']['goal_status'])
                 self.assertNotIn('rejected_draft_goals', payload)
                 self.assertFalse(any(c['tool']['name'] == 'place_batch' for c in bridge.calls))
-                return json.dumps({'type': 'act', 'goals': [goal], 'actions': [action]})
+                return json.dumps({'type': 'plan', 'goals': [goal], 'reason': 'Confirm the complete observed draft.'})
             self.assertEqual(payload['goals'], [goal])
             return json.dumps({'type': 'act', 'actions': [action]})
         result = await self.run_mock(bridge, reply)
@@ -211,7 +211,7 @@ class ConstructionLoopTests(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(payload['construction_knowledge']['categories']['unknown']['count'], 1)
                 self.assertIn('unloaded or unknown', payload['draft_observation_errors'][0]['draft_observation_error'])
                 self.assertFalse(any(c['tool']['name'] == 'place_batch' for c in bridge.calls))
-                return json.dumps({'type': 'act', 'goals': [good], 'actions': [action]})
+                return json.dumps({'type': 'plan', 'goals': [good], 'reason': 'Correct full observed geometry.'})
             return json.dumps({'type': 'act', 'actions': [action]})
         result = await self.run_mock(bridge, reply)
         self.assertTrue(result['verified'])
@@ -269,7 +269,7 @@ class ConstructionLoopTests(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(facts['categories']['missing_nonair']['count'], len(task.expected))
                 self.assertEqual(facts['materials']['cobblestone']['minimum_additional_same_name_items'], 0)
                 self.assertFalse(any(c['tool']['name'] == 'place_batch' for c in bridge.calls))
-                return json.dumps({'type': 'act', 'goals': [{**goal, 'must_change': True}], 'actions': [action]})
+                return json.dumps({'type': 'plan', 'goals': [{**goal, 'must_change': True}], 'reason': 'Retain the full requested new geometry.'})
             self.assertEqual(payload['construction_knowledge']['goal_status'], 'accepted and frozen')
             return json.dumps({'type': 'act', 'actions': [action]})
         with tempfile.TemporaryDirectory() as directory:
@@ -279,7 +279,9 @@ class ConstructionLoopTests(unittest.IsolatedAsyncioTestCase):
             agent = ModelToolAgent(bridge, SimpleNamespace(generate_response=respond), settings=settings,
                                    library=library, auto_reflect=False)
             try:
-                result = await agent.run(task.objective)
+                # Rejection is about an explicit NEW-block amount, not a
+                # material total invented from the floor's dimensions.
+                result = await agent.run(task.objective + f' Place exactly {len(task.expected)} NEW cobblestone blocks.')
                 self.assertTrue(result['verified'])
                 self.assertEqual(result['data']['tool_calls'], 1)
                 self.assertEqual(planning_calls, 3)

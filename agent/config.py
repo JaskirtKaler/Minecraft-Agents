@@ -19,6 +19,11 @@ class Config(BaseModel):
     # Tavily Web Search API Settings
     tavily_api_key: str = Field(default_factory=lambda: os.getenv("TAVILY_API_KEY", ""))
     enable_tavily: bool = Field(default_factory=lambda: os.getenv("ENABLE_TAVILY", "false").lower() == "true")
+    tavily_cache_path: str = Field(default_factory=lambda: os.getenv("TAVILY_CACHE_PATH", "data/knowledge/tavily.json"))
+    tavily_max_requests_per_task: int = Field(default_factory=lambda: int(os.getenv("TAVILY_MAX_REQUESTS_PER_TASK", "1")), ge=0, le=1)
+    tavily_daily_request_limit: int = Field(default_factory=lambda: int(os.getenv("TAVILY_DAILY_REQUEST_LIMIT", "3")), ge=0, le=10)
+    tavily_timeout_seconds: float = Field(default_factory=lambda: float(os.getenv("TAVILY_TIMEOUT_SECONDS", "10")), gt=0, le=30)
+    tavily_cache_ttl_seconds: float = Field(default_factory=lambda: float(os.getenv("TAVILY_CACHE_TTL_SECONDS", "604800")), ge=0)
 
     # WebSocket Bridge Server Settings
     ws_host: str = Field(default_factory=lambda: os.getenv("WS_HOST", "127.0.0.1"))
@@ -39,7 +44,7 @@ class Config(BaseModel):
     graphiti_enabled: bool = Field(default_factory=lambda: os.getenv("GRAPHITI_ENABLED", "true").lower() == "true")
     memory_base_url: str = Field(default_factory=lambda: os.getenv("MEMORY_BASE_URL", "http://localhost:11434/v1"))
     memory_api_key: str = Field(default_factory=lambda: os.getenv("MEMORY_API_KEY", "local-ollama"))
-    memory_model: str = Field(default_factory=lambda: os.getenv("MEMORY_MODEL", os.getenv("JARVIS_MODEL", "gemma4:26b")))
+    memory_model: str = Field(default_factory=lambda: os.getenv("MEMORY_MODEL", os.getenv("JARVIS_MODEL", "nemotron-3.5-lightning:30b-mlx")))
     memory_embedding_model: str = Field(default_factory=lambda: os.getenv("MEMORY_EMBEDDING_MODEL", "nomic-embed-text"))
     memory_embedding_dim: int = Field(default_factory=lambda: int(os.getenv("MEMORY_EMBEDDING_DIM", "768")))
     memory_ingest_timeout: float = Field(default_factory=lambda: float(os.getenv("MEMORY_INGEST_TIMEOUT", "180")))

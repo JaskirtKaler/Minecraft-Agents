@@ -152,6 +152,24 @@ class ConstructionTask:
     quarry_supply: int = 256
     owned_mistake_fixture: tuple = ()
 
+    def request_context(self):
+        """Intent facts already explicit in the request, never an oracle grid.
+
+        The guarded construction scope is a mutation boundary, not a desired
+        blueprint. Current block names still require actual observations and
+        the model must author its own complete final geometry.
+        """
+        mode = ("repair_existing" if self.owned_mistake_fixture else
+                "finish_existing" if self.name == "partial_row" else "build_new")
+        return {
+            "source": "explicit-simulated-user-request-not-world-observation",
+            "work_mode": mode,
+            "preserve_already_correct": mode != "build_new",
+            "scope_semantics": "construction_scope is a guarded mutation boundary, not a desired-block map or action plan.",
+            "completion_semantics": "All requested final geometry and preservation requirements must hold together; selected sample cells do not prove the whole result.",
+            "existing_geometry_semantics": "Retaining an already-correct floor, wall, roof or empty space is a final-state requirement, not new placement or an intermediate prerequisite.",
+        }
+
     def snapshot_description(self):
         return {
             "name": self.name, "seed": self.seed, "objective": self.objective,
@@ -159,6 +177,7 @@ class ConstructionTask:
             "expected_cells": {cell_key(p): name for p, name in self.expected.items()},
             "initial_cells": {cell_key(p): name for p, name in self.initial.items()},
             "inventory": dict(self.inventory), "fixtures": self.fixtures,
+            "request_context": self.request_context(),
             "owned_mistake_fixture": {
                 "enabled": bool(self.owned_mistake_fixture),
                 "positions": [position(p) for p in self.owned_mistake_fixture],
@@ -238,12 +257,13 @@ def make_task(name, seed):
         owned_mistake_fixture = tuple(rng.sample(interior, 2))
         detail = (
             "the existing completed shelter described as " + detail + ". Keep every already-correct block. "
-            "This explicit repair benchmark injects two verified current-task OWN misplaced cobblestones "
-            "at final-air interior cells immediately after your complete final geometry is frozen: " +
-            json.dumps([position(p) for p in owned_mistake_fixture]) + ". "
+            "This explicit repair benchmark starts from an observed correct baseline. No misplaced fixture blocks "
+            "are present yet. After a complete final-state contract covering the requested geometry is accepted, "
+            "the harness introduces verified current-task OWN misplaced cobblestones into that world. "
             "The injection is trusted simulator fixture setup, not your model actions or training. "
-            "Observe the wrong blocks and choose controlled own-block repair to restore the required air; "
-            "do not demolish the correct floor, walls or roof"
+            "Use fresh actual block and backend ownership observations after that phase transition; do not assume "
+            "a future mistake is currently present. Restore the requested final geometry while retaining correct "
+            "floor, walls, roof and empty spaces. A sparse list of selected cells does not cover the complete request"
         )
     minimum = (x0, floor - (1 if name == "footing_floor" else 0), z0)
     maximum = (x1, top, z1)
@@ -296,6 +316,7 @@ class SimulatedConstructionBridge:
             "nearbyBlocks": list(self.task.fixtures),
             "constructionPractice": {
                 "source": "python-synthetic-simulator", "limits": SIMULATION_LIMITS,
+                "request_context": self.task.request_context(),
                 "construction_scope": {"min": position(self.task.minimum), "max": position(self.task.maximum)},
                 "loaded_arena": {
                     "min": position(tuple(min(p[axis] for p in self.blocks) for axis in range(3))),
@@ -304,6 +325,7 @@ class SimulatedConstructionBridge:
                 "quarry_supply_remaining": self.supply,
                 "fixture_protection": "Ground, chest/table, outside geometry and completed cobblestone are read-only.",
                 "construction_status": self._construction_status(),
+                "owned_mistake_benchmark": self._fixture_phase_facts(),
             },
         }
 
@@ -317,6 +339,36 @@ class SimulatedConstructionBridge:
 
     def _world_identity(self):
         return {key: self.world.get(key) for key in ("id", "sessionId", "dimension")}
+
+    def _fixture_phase_facts(self):
+        """Truthful harness phase only; future injection coordinates stay private."""
+        if not self.task.owned_mistake_fixture:
+            return {"enabled": False}
+        complete = self._fixture_setup["complete"] is True
+        verified_count = sum(receipt.get("success") is True and receipt.get("verified") is True
+                             and receipt.get("data", {}).get("inventory_delta") == -1
+                             for receipt in self._fixture_setup["receipts"])
+        active = (self._construction_contract is not None and
+                  self._construction_contract["world"] == self._world_identity() and
+                  self._construction_contract["task_id"] == self._fixture_setup.get("task_id"))
+        phase = ("fixture_setup_incomplete" if not complete and verified_count else
+                 "awaiting_complete_accepted_geometry" if not complete else
+                 "fixture_injected_current_task" if active else "fixture_injected_authority_inactive")
+        return {
+            "enabled": True, "source": "trusted-harness-phase-not-current-block-state",
+            "phase": phase, "fixture_setup_complete": complete,
+            "verified_fixture_placement_count": verified_count,
+            "current_task_authority_active": active,
+            "notice": ("Fixture setup stopped after partial verified placements; current observations remain authoritative. "
+                       "The incomplete setup cannot count as a passed benchmark."
+                       if not complete and verified_count else
+                       "No owned mistakes have been injected. Baseline observations may already match the request, "
+                       "but the repair benchmark cannot pass until its explicit fixture phase runs. A complete "
+                       "accepted geometry is required before setup; sparse samples do not activate it."
+                       if not complete else
+                       "The labelled fixture phase ran. Current block and ownership observations, not this phase "
+                       "record, determine remaining mistakes and repair permission. Phase completion is not task completion."),
+        }
 
     async def set_construction_contract(self, contract):
         """Trusted controller handshake, intentionally absent from tool dispatch.
@@ -359,6 +411,18 @@ class SimulatedConstructionBridge:
                 raise ValueError("IMMUTABLE_CONSTRUCTION_CONTRACT: current-task geometry cannot change")
             return {"active": True, "task_id": task_id, "cell_count": len(desired)}
         if self.task.owned_mistake_fixture and not self._fixture_setup["complete"]:
+            # Harness-only acceptance gate: never inject a repair benchmark
+            # under a sparse sample contract or silently substitute its oracle
+            # for the model's requested final geometry. Equivalent complete
+            # scalar/region declarations compile to the same trusted cell map.
+            missing = sum(p not in desired for p in self.task.expected)
+            contradictory = sum(p in desired and desired[p] != block
+                                for p, block in self.task.expected.items())
+            if missing or contradictory:
+                raise ValueError("INCOMPLETE_REPAIR_FIXTURE_CONTRACT: complete requested final geometry must be "
+                                 "accepted before any fixture placement; "
+                                 f"{missing} requested cells omitted, {contradictory} declared cells contradict the request. "
+                                 "No fixture was injected; the sparse or contradictory contract was not installed.")
             if any(desired.get(p) != "air" or self.blocks.get(p) != "air"
                    for p in self.task.owned_mistake_fixture):
                 raise ValueError("INVALID_REPAIR_FIXTURE_CONTRACT: frozen targets must require air")
@@ -846,9 +910,11 @@ class LocalLoggedClient:
             content = response.choices[0].message.content or ""
             usage = response.usage
             metrics = {"seconds": round(perf_counter() - started, 3),
+                       "finish_reason": response.choices[0].finish_reason,
                        "prompt_tokens": getattr(usage, "prompt_tokens", None),
                        "completion_tokens": getattr(usage, "completion_tokens", None)}
             self.stream.write(json.dumps({"call": self.calls, "messages": messages,
+                                          "response_schema": response_schema, "reasoning_effort": options.get('reasoning_effort'),
                                           "response": content, "metrics": metrics}) + "\n")
             self.stream.flush()
             return content
@@ -881,7 +947,7 @@ async def run(args):
     directory = ROOT / "data" / "construction-practice" / (
         datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S") + "-" + uuid.uuid4().hex[:8])
     directory.mkdir(parents=True)
-    model = args.model or os.getenv("JARVIS_MODEL", "gemma4:26b")
+    model = args.model or os.getenv("JARVIS_MODEL", "nemotron-3.5-lightning:30b-mlx")
     report = {"mode": "python-construction-simulator", "model": model, "endpoint": LOCAL_ENDPOINT,
               "seed": args.seed, "episodes_requested": args.episodes, "time_budget_seconds": args.timeout,
               "normal_world_access": False, "paid_apis": False, "weight_training": False,
@@ -1010,7 +1076,7 @@ def parser():
     result.add_argument("--max-steps", type=int, default=12, help="Maximum model decisions per episode.")
     result.add_argument("--task", choices=TASK_NAMES + REPAIR_TASK_NAMES,
                         help="Repeat this family on different seeded layouts; repair_shelter is an explicit harness fixture.")
-    result.add_argument("--model", help="Local Ollama model; defaults to JARVIS_MODEL or gemma4:26b.")
+    result.add_argument("--model", help="Local Ollama model; defaults to JARVIS_MODEL or nemotron-3.5-lightning:30b-mlx.")
     return result
 
 

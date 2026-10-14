@@ -18,6 +18,7 @@ This is an active prototype. The table distinguishes controlled real-server test
 | Model-led crafting, placement, digging and interactions | Generic tools are available to chat and terminal planning. Recipes come from Minecraft's registry, not item-specific action scripts. The model decides dependencies and recovery; broad reliability is not established. Smelting lacks a furnace-control tool. |
 | Practice and experience-based learning | `./learn.sh` lets the model select objectives, act in varied isolated setups, reflect, and retrieve persistent lessons. It makes real inference calls. `./practice.sh` remains a fixed, zero-inference regression baseline. Neither updates model weights. |
 | Construction grounding and simulated practice | Exact desired/observed cell facts, material shortfalls and per-height summaries support model-selected construction. `./learn.sh --backend simulator --suite construction` provides five synthetic task families with independent full-cell grading. It does not establish Mineflayer or normal-world building competence. |
+| External Minecraft mechanics research | Optional model-selected `knowledge_lookup` uses bounded, source-restricted Tavily Basic search with persistent caching and task/daily request ceilings. It supplies untrusted cited evidence, not live world state or a building script. Autonomous model selection and knowledge usefulness remain unproven. |
 | Persistent environmental knowledge graph / long-term world memory | Local SQLite checkpoints + Graphiti temporal graph with embedded FalkorDB Lite. Rejoins recover prior progress; task outcomes and discoveries are ingested in the background. Live gameplay acceptance testing is still needed. |
 
 Normal chat no longer rejects crafting/building/farming verbs before asking the model. Status, inventory, memory and cancellation retain direct control routes. Physical operations are serialized and expired operations cannot issue new guarded actions. Already-issued server actions may still have partial effects, so interrupted outcomes remain unverified.
@@ -33,6 +34,7 @@ Python controller (main.py)
   ├─ experience library (SQLite): outcomes, reusable lessons, retrieval
   ├─ exact world checkpoints / durable episode outbox (SQLite)
   ├─ Graphiti → embedded FalkorDB Lite → local Ollama extraction + embeddings
+  ├─ optional Tavily mechanic evidence → cache + request budget → model context
   └─ typed regression baseline + legacy opted-in JS experiments (unverified)
         │ WebSocket :8765
         ▼

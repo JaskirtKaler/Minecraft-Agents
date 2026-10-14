@@ -4,7 +4,7 @@ import copy
 import json
 import unittest
 
-from agent.construction_knowledge import construction_knowledge
+from agent.construction_knowledge import construction_knowledge, current_spatial_observations
 from agent.regions import RegionError, compile_goal, position_key
 
 
@@ -64,6 +64,16 @@ class ConstructionKnowledgeTests(unittest.TestCase):
         self.assertEqual(material["minimum_additional_same_name_items"], 18)
         self.assertEqual(material["remaining_cells_upper_bound"], 46)
         self.assertNotIn("dirt", packet["materials"])
+        self.assertEqual(packet["progress_facts"]["already_matching_cells"], 54)
+        self.assertEqual(packet["progress_facts"]["known_remaining_cells"], 46)
+        self.assertEqual(packet["progress_facts"]["required_nonair_remaining_upper_bound"], 46)
+        self.assertTrue(all(fact["geometry_matches"] is True
+                            for fact in packet["categories"]["matched_change_required"]["samples"]))
+        self.assertTrue(all(fact["geometry_matches"] is False
+                            for fact in packet["categories"]["missing_nonair"]["samples"]))
+        self.assertIn("rejected whole", packet["mechanics"]["no_op"])
+        self.assertIn("verified placement receipts", packet["mechanics"]["repair"])
+        self.assertIn("separate repair_batch", packet["mechanics"]["repair"])
 
     def test_air_does_not_hide_soil_leaves_preserved_or_unknown_cells(self):
         goal = region((-20, 51, -15), (-6, 51, -15))
@@ -131,6 +141,22 @@ class ConstructionKnowledgeTests(unittest.TestCase):
         self.assertEqual(packet["target_cell_count"], 2)
         unknown = packet["categories"]["unknown"]["samples"]
         self.assertEqual({fact["unknown_reason"] for fact in unknown}, {"conflicting_observations", "missing_or_unloaded"})
+        self.assertTrue(all(fact["geometry_matches"] is None for fact in unknown))
+        self.assertEqual(packet["progress_facts"]["unknown_cells"], 2)
+        self.assertEqual(packet["progress_facts"]["known_remaining_cells"], 0)
+
+    def test_shared_current_observations_preserve_signed_keys_and_ignore_unrelated_goals(self):
+        goal = region((-1, 50, -3), (0, 50, -3))
+        wrong_goal = region((-1, 50, 3), (0, 50, 3))
+        evidence_entries = [evidence(goal, {"-1,50,-3": {"name": "air", "loaded": True},
+                                             "0,50,-3": {"name": "air", "loaded": False},
+                                             "-01,50,-3": "cobblestone"}),
+                            evidence(wrong_goal, {"-1,50,-3": "cobblestone"})]
+        original = copy.deepcopy(evidence_entries)
+        observed = current_spatial_observations([goal], evidence_entries)
+        self.assertEqual(observed, {(-1, 50, -3): "air", (0, 50, -3): "unknown"})
+        observed[(-1, 50, -3)] = "cobblestone"
+        self.assertEqual(evidence_entries, original)
 
     def test_same_block_goal_overlaps_deduplicate_materials_and_other_goals_are_ignored(self):
         first = region((0, 1, 0), (2, 1, 0))

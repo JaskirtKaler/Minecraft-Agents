@@ -8,11 +8,46 @@ import asyncio
 import fcntl
 import hashlib
 import json
+import logging
 import os
 from datetime import datetime
 from pathlib import Path
+from types import SimpleNamespace
+from urllib.parse import urlparse
 
 from agent.config import Config
+
+logger = logging.getLogger("GraphitiMemory")
+
+
+class MemoryCompletions:
+    """Keep local fact extraction on the same bounded JSON path as planning.
+
+    Graphiti's generic client does not send an Ollama reasoning override. A
+    reasoning model can exhaust its output budget without emitting JSON. Only
+    the known local compatibility endpoint receives this override; hosted
+    provider defaults and embedding calls remain untouched.
+    """
+    def __init__(self, completions, endpoint):
+        self.completions = completions
+        parsed = urlparse(endpoint)
+        self.local = parsed.hostname in {'localhost', '127.0.0.1', '::1'} and parsed.port == 11434
+
+    async def create(self, **kwargs):
+        if self.local:
+            kwargs = {**kwargs, 'reasoning_effort': 'none'}
+        response = await self.completions.create(**kwargs)
+        if response.choices and not (response.choices[0].message.content or '').strip():
+            logger.warning('Empty memory completion: finish_reason=%s, completion_tokens=%s',
+                           response.choices[0].finish_reason,
+                           getattr(getattr(response, 'usage', None), 'completion_tokens', None))
+        return response
+
+
+def memory_api_adapter(api, endpoint):
+    """Adapt completion options only; close the original API client normally."""
+    return SimpleNamespace(chat=SimpleNamespace(completions=MemoryCompletions(api.chat.completions, endpoint)),
+                           embeddings=api.embeddings)
 
 
 def group_id(world_id: str, dimension: str) -> str:
@@ -77,7 +112,8 @@ class GraphitiMemory:
             self.api = AsyncOpenAI(
                 api_key=cfg.api_key, base_url=cfg.base_url, timeout=60, max_retries=0,
             )
-            llm = OpenAIGenericClient(config=cfg, client=self.api, max_tokens=4096)
+            adapted_api = memory_api_adapter(self.api, cfg.base_url)
+            llm = OpenAIGenericClient(config=cfg, client=adapted_api, max_tokens=4096)
             embedder = OpenAIEmbedder(
                 config=OpenAIEmbedderConfig(
                     api_key=cfg.api_key, base_url=cfg.base_url,
@@ -90,7 +126,7 @@ class GraphitiMemory:
             self.graph = Graphiti(
                 graph_driver=driver,
                 llm_client=llm, embedder=embedder,
-                cross_encoder=OpenAIRerankerClient(client=self.api, config=cfg),
+                cross_encoder=OpenAIRerankerClient(client=adapted_api, config=cfg),
                 max_coroutines=1,
             )
             await driver._init_task

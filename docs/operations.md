@@ -153,7 +153,7 @@ From the repository root:
    cp .env.example .env
    ```
 
-4. For local development, start Ollama and make sure the model named by `NEBIUS_MODEL` and `JARVIS_MODEL` is available. The supplied example uses `gemma4:26b`; change both values if you use another local model.
+4. For local development, start your OpenAI-compatible local model service and make sure the models named by `NEBIUS_MODEL`, `JARVIS_MODEL`, and `MEMORY_MODEL` are available. The supplied example uses `nemotron-3.5-lightning:30b-mlx`; change the selectors together when moving to another local model. This identifier is the model already installed on the development Mac, not a claim that it can be downloaded from the public Ollama catalog.
 
    ```bash
    ollama serve
@@ -193,7 +193,7 @@ The environment names retain the project’s Nebius integration terminology, but
 
 ```dotenv
 NEBIUS_BASE_URL=http://localhost:11434/v1
-NEBIUS_MODEL=gemma4:26b
+NEBIUS_MODEL=nemotron-3.5-lightning:30b-mlx
 ```
 
 `NEBIUS_API_KEY` must remain non-empty because the current controller validates it before generation; Ollama ignores the placeholder. Jarvis recipe/strategy requests use Ollama’s native `/api/chat` endpoint.
@@ -220,6 +220,18 @@ The memory layers serve different purposes:
 Type `memory` in the controller terminal or `@AI_Agent memory` in Minecraft chat to recall progress. `@AI_Agent memory status` also works in game chat. Address `status` and `stop` to the intended bot to inspect or cancel its work. A busy graph returns exact checkpoint context immediately; background extraction can take some time with a large local model.
 
 Graphiti inference is configured **independently** of the Nebius action planner, and defaults to local Ollama even if you later switch the planner to Nebius. No hosted inference is used for memory unless you explicitly change `MEMORY_BASE_URL` and credentials. All clients (extraction, embeddings, reranking) are configured explicitly. Graphiti telemetry defaults off.
+
+The local preset selects `MEMORY_MODEL=nemotron-3.5-lightning:30b-mlx`, with `MEMORY_BASE_URL=http://localhost:11434/v1` and `MEMORY_EMBEDDING_MODEL=nomic-embed-text` (768 dimensions). The model names are separate: changing only `NEBIUS_MODEL` does not change graph extraction. Changing the embedding model or dimension for an existing graph requires an explicit migration/reindex plan; do not mix vector spaces or erase the existing memory directory as routine troubleshooting.
+
+Local Graphiti completion requests at port 11434 disable hidden reasoning, just like short planner JSON requests. The adapter preserves Graphiti's response schema, output budget and validation; it changes neither embeddings nor hosted-provider reasoning defaults. Empty completions remain failures and include finish-reason/token-budget diagnostics rather than fabricated facts.
+
+To exercise real local ingestion, shutdown/reopen, scoped recall, replay deduplication and delivery of recalled context into a planner prompt without launching Minecraft:
+
+```bash
+RUN_MEMORY_LIVE_TEST=1 /Users/jaskirtkaler/miniforge3/envs/minecraft-agent/bin/python -m unittest tests.test_memory_live -v
+```
+
+This opt-in test refuses a non-local memory endpoint, uses a temporary memory directory and a synthetic evidenced task record, and uses a fake action planner to assert the exact prompt connection. Real local Graphiti extraction and embedding calls are made; no normal-world memory is ingested. Passing proves the persistence/recall seam, not actual mining or a live player's world rejoin. The ordinary offline pipeline test uses a durable fake graph and requires a graph-only marker, so SQLite fallback alone cannot masquerade as graph recall.
 
 Only one controller should use a given memory directory. The embedded backend requires Python 3.12+ on macOS/Linux; no Docker or external graph service is needed. If the Mac backend reports a missing OpenMP library, install `libomp` with Homebrew as described by [FalkorDB Lite](https://github.com/FalkorDB/falkordblite). Set `GRAPHITI_ENABLED=false` to use exact checkpoints without the graph, or `MEMORY_ENABLED=false` to disable both.
 
@@ -319,6 +331,10 @@ After complete region goals are accepted and their current spatial facts have be
 
 Structurally valid construction drafts emitted during read-only discovery are retained as **unaccepted drafts**, not frozen goals. Jarvis must resubmit its complete criteria for grounding and review before physical work. Rejected drafts can also supply clearly labelled current facts for correction; unreadable cells stay unknown with observation errors rather than prematurely aborting the next planning decision. Neither kind of draft authorizes a mutation.
 
+After a regional discovery draft or declaration error, a compact model call confirms/corrects only the complete final criteria before ordinary action planning resumes. Its typed response contains no actions; coordinates and geometry still come from the model. A regional proposal cannot be downgraded to a few sampled `block_is` goals after an error. Invalid drafts do not freeze their coordinates. `shell_3d` is an optional generic six-face box-boundary predicate, not a house template: it leaves interior cells unconstrained unless the model separately requires air. The controller never automatically converts a rejected solid volume to a shell.
+
+Known no-op placements and digging observed air are rejected before dispatch, with exact offending coordinates and bounded remaining-cell facts. A mixed useful/no-op batch is rejected whole, not silently filtered. The model must choose a new batch. Repeated unchanged queries cannot erase failed physical attempts; changed read results can justify a fresh query. These guards prevent futile mutations but do not guarantee that the model makes an effective next choice.
+
 ### Action checking and controlled own-placement repair
 
 After grounding and intent review, accepted spatial cells are installed through a trusted controller-only handshake bound to an objective ID and the observed world/session/dimension. This handshake is not a model tool. Both planner and executor reject permanent construction batches that contradict a final cell, including required air and signed-coordinate scope. Rejection applies to the whole batch before its first mutation: coordinates/order are never silently filtered, substituted or reordered. Correct final solid cells cannot be demolished, including through convenience gathering tools. Legacy task/code execution is unavailable while a construction contract is active, preventing a parallel bypass of typed-tool checking.
@@ -350,6 +366,23 @@ Experience traces retain tool durations, execution budgets, timeout details, idl
 The budget is arithmetic, not a promise that a station exists or execution will succeed. A `recipe_index` selects a preview variant; actual crafting still selects a currently craftable recipe at its supplied station. Jarvis must interpret the preview and choose or revise its actions. Placement support, tool reach, and fresh server outcome checks remain execution contracts, not hard-coded task sequences.
 
 ## Tests and checks
+
+### Optional external mechanic lookups
+
+Set `ENABLE_TAVILY=true` with a configured key to expose `knowledge_lookup {query,missing_fact}` in the normal model planner. The current local `.env` enables it; the distributed example stays opt-in. The default limits are `TAVILY_MAX_REQUESTS_PER_TASK=1` and `TAVILY_DAILY_REQUEST_LIMIT=3`, using Basic search only, at most three Minecraft Wiki sources, and no automatic retry. The daily ceiling is persisted by UTC date in `data/knowledge/tavily.json`; concurrent clients use a file lock, and corrupt/busy budget storage fails closed. Successful and empty results are cached for seven days. A failed network attempt also consumes its local budget slot.
+
+The model should query only a concrete mechanic missing from registry/world observations, such as growth rules. It must not search for live coordinates, ownership, repeated-action errors or a known building sequence. Source content is bounded and labelled untrusted; a version-qualified query does not prove every returned page describes that version. Observed world state remains authoritative. The legacy planner no longer sends whole objectives/error traces to automatic Tavily fallback. [Tavily's Search API](https://docs.tavily.com/documentation/api-reference/endpoint/search) documents the request and optional returned usage report.
+
+The explicit research probe uses the configured local model and permits at most one new request. Run it with the project's Conda Python only when you intentionally want that possible credit use:
+
+```bash
+python -m practice.knowledge_probe --allow-one-paid-lookup
+python -m practice.knowledge_probe --allow-one-paid-lookup --evidence-only
+```
+
+The first tests autonomous selection of the research tool; the second explicitly tests model-selected query → retrieval → source-based answer. They are distinct tests, not Minecraft gameplay, weight training, or proof of spontaneous missing-knowledge detection. Reports/model requests remain under `data/knowledge-validation/`. Empty retrieval must not become a fabricated citation or a passing knowledge result.
+
+### Offline verification
 
 Run the Python controller/memory/planner contracts and Node gameplay-tool checks:
 

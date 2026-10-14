@@ -14,7 +14,7 @@ MAX_REGIONS = 16
 MAX_EXCEPTIONS = 64
 MAX_CELLS = 2304
 MAX_INSPECT_CELLS = 4096
-MODES = frozenset({"solid", "perimeter_xz"})
+MODES = frozenset({"solid", "perimeter_xz", "shell_3d"})
 
 
 class RegionError(ValueError):
@@ -63,6 +63,8 @@ def _cell_count(minimum, maximum, mode):
     width = maximum[0] - minimum[0] + 1
     height = maximum[1] - minimum[1] + 1
     depth = maximum[2] - minimum[2] + 1
+    if mode == 'shell_3d':
+        return width * height * depth - max(0, width - 2) * max(0, height - 2) * max(0, depth - 2)
     if mode == "solid" or width <= 2 or depth <= 2:
         return width * height * depth
     # An x/z perimeter is present at every y layer.  The inner rectangle is
@@ -74,7 +76,8 @@ def _positions(minimum, maximum, mode):
     for x in range(minimum[0], maximum[0] + 1):
         for y in range(minimum[1], maximum[1] + 1):
             for z in range(minimum[2], maximum[2] + 1):
-                if mode == "solid" or x in {minimum[0], maximum[0]} or z in {minimum[2], maximum[2]}:
+                if (mode == "solid" or x in {minimum[0], maximum[0]} or z in {minimum[2], maximum[2]}
+                        or mode == 'shell_3d' and y in {minimum[1], maximum[1]}):
                     yield x, y, z
 
 
@@ -104,7 +107,9 @@ def compile_regions(regions, exceptions=()):
             prior = cells.get(coordinate)
             if prior is not None and prior != block:
                 raise RegionError(
-                    f"conflicting non-exception region overlap at {position_dict(coordinate)}: {prior} versus {block}"
+                    f"conflicting non-exception region overlap at {position_dict(coordinate)}: {prior} versus {block}. "
+                    "solid fills its entire volume; a nested air region does not carve it. Choose disjoint regions "
+                    "(shell_3d/perimeter_xz if appropriate) or covered-cell exceptions; never shift requested bounds."
                 )
             cells[coordinate] = block
             if len(cells) > MAX_CELLS:

@@ -109,7 +109,7 @@ def required_ollama_models(config, environment):
     if is_local_ollama(config.nebius_base_url):
         required.append(config.nebius_model)
     if is_local_ollama(environment.get("JARVIS_ENDPOINT", "http://localhost:11434/api/chat")):
-        required.append(environment.get("JARVIS_MODEL", "gemma4:26b"))
+        required.append(environment.get("JARVIS_MODEL", "nemotron-3.5-lightning:30b-mlx"))
     if config.memory_enabled and config.graphiti_enabled and is_local_ollama(config.memory_base_url):
         required.extend([config.memory_model, config.memory_embedding_model])
     return required

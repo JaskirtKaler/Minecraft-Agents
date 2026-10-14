@@ -109,6 +109,19 @@ def _observations(goals, evidence):
     return observations, conflicts
 
 
+def current_spatial_observations(goals, evidence):
+    """Current coordinate→block facts shared with construction preflight.
+
+    Only observations tied to the supplied spatial goals are used. Missing,
+    unloaded and contradictory cells cannot become known air or matching
+    blocks through a baseline, history, or a later conflicting entry.
+    The returned map is a new object and contains no permission/ownership.
+    """
+    relevant = [goal for goal in goals if isinstance(goal, Mapping)
+                and goal.get("kind") in {"regions_match", "block_is"}]
+    return _observations(relevant, evidence)[0]
+
+
 def _bounds(coordinates):
     if not coordinates:
         return None
@@ -245,6 +258,7 @@ def construction_knowledge(goals, evidence, state, max_samples=8):
         below = (coordinate[0], coordinate[1] - 1, coordinate[2])
         fact = {"position": position_dict(coordinate), "desired": desired, "observed": actual,
                 "change_required": change_required,
+                "geometry_matches": None if actual == "unknown" else actual == desired,
                 "below": {"position": position_dict(below), "observed": observed.get(below, "unknown")}}
         if below in targets:
             fact["below"]["desired"] = targets[below]["desired"]
@@ -302,10 +316,24 @@ def construction_knowledge(goals, evidence, state, max_samples=8):
                         minimum_additional_same_name_items=max(0, known - held),
                         maximum_additional_if_unknowns_need_placement=max(0, possible - held))
 
+    matching_count = sum(len(categories[name]) for name in ("matched_change_required", "matched_no_change_required"))
+    unknown_count = len(categories["unknown"])
+    required_air_obstructions = sum(fact["desired"] in _AIR for name in ("natural_obstructions", "other_occupied_mismatches")
+                                    for fact in categories[name])
+
     return {
         "applicable": bool(targets),
         "source": "frozen desired goals + current evidence.observed + current inventory; baselines not used",
         "target_cell_count": len(targets), "target_bounds": _bounds(targets),
+        "progress_facts": {
+            "already_matching_cells": matching_count,
+            "known_remaining_cells": len(targets) - matching_count - unknown_count,
+            "unknown_cells": unknown_count,
+            "remaining_cells_upper_bound": len(targets) - matching_count,
+            "required_nonair_remaining_upper_bound": sum(material["remaining_cells_upper_bound"] for material in materials.values()),
+            "required_air_occupied_cells": required_air_obstructions,
+            "meaning": "Matching coordinates are retained facts, not remaining placement/clearing targets. Unknown coordinates need observation; these totals do not prove must_change or completion.",
+        },
         "categories": summaries, "materials": dict(sorted(materials.items())), "layers": _layer_summary(layers),
         "sample_budget": max_samples,
         "sample_policy": "Global round-robin category budget; terrain-family, height/name and spatial diversity, not an action order. Counts include unsampled cells.",
@@ -317,7 +345,9 @@ def construction_knowledge(goals, evidence, state, max_samples=8):
         },
         "mechanics": {
             "placement": "A desired non-air block in observed air needs placement, not digging. Normal placement consumes one held item for a registry-confirmed same-name placeable block and needs a loaded valid adjacent support; below is only one possible support.",
+            "no_op": "Never propose placement at an already-matching observed cell or digging at observed air. A batch containing such a known no-op is rejected whole; no targets are silently filtered or substituted. Choose your own genuinely remaining cells from the current facts.",
             "occupied": "A differing observed non-air block occupies the target. Natural-looking names describe observations, not permission, provenance or a safe clearing guarantee.",
+            "repair": "A wrong non-natural block is not automatically removable. Only the backend's current-task verified placement receipts can establish repairable_owned_mismatches; eligible cleanup uses the separate repair_batch tool. Ordinary dig cannot gain repair authority by repeating. Never rewrite frozen goals to accept a misplaced block or remove already-correct cells.",
             "air": "Required air means an empty final cell. Never dig an observed air/cave_air/void_air cell; exact-name air mismatches remain separate from occupied cells.",
             "quantity": "Already-matching blocks require no additional material. Counts concern remaining final cells, not final held inventory. Unknown cells make remaining quantities upper bounds. Block names are not automatically inventory items; registry mechanics must confirm the pair.",
             "verification": "Current matches are geometry facts, not proof of must_change or overall success. Only the original goal verifier can confirm completion; missing evidence and conflicting observations remain unknown.",

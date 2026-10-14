@@ -66,6 +66,22 @@ class TaskOracleTests(unittest.TestCase):
         self.assertEqual(len(door), 2)
         self.assertTrue(any(b == "air" and p[2] != task.maximum[2] for p, b in task.expected.items()))
 
+    def test_repair_request_describes_pending_setup_without_future_mistake_coordinates_or_a_plan(self):
+        task = make_task("repair_shelter", 204)
+        self.assertIn("No misplaced fixture blocks are present yet", task.objective)
+        self.assertIn("complete final-state contract", task.objective)
+        self.assertIn("fresh actual block", task.objective)
+        for p in task.owned_mistake_fixture:
+            self.assertNotIn(json.dumps(position(p)), task.objective)
+        context = task.request_context()
+        self.assertEqual(context["work_mode"], "repair_existing")
+        self.assertTrue(context["preserve_already_correct"])
+        self.assertNotIn("expected_cells", context)
+        self.assertNotIn("goals", context)
+        self.assertNotIn("actions", context)
+        self.assertEqual(make_task("partial_row", 204).request_context()["work_mode"], "finish_existing")
+        self.assertEqual(make_task("negative_floor", 204).request_context()["work_mode"], "build_new")
+
     def test_check_and_list_are_offline_and_do_not_start_eval(self):
         with patch("practice.construction.run", side_effect=AssertionError("No inference!")), redirect_stdout(io.StringIO()) as output:
             self.assertEqual(main(["--check"]), 0)
@@ -293,6 +309,89 @@ class ControlledRepairTests(unittest.IsolatedAsyncioTestCase):
         ack = await self.register(bridge)
         self.assertTrue(ack["active"])
         return task, bridge, list(task.owned_mistake_fixture)
+
+    async def test_sparse_selected_air_cells_cannot_install_contract_or_inject_fixture(self):
+        task = make_task("repair_shelter", 204)
+        bridge = SimulatedConstructionBridge(task)
+        before = bridge.snapshot()
+        sparse = {p: "air" for p in task.owned_mistake_fixture}
+        with self.assertRaisesRegex(ValueError, "INCOMPLETE_REPAIR_FIXTURE_CONTRACT"):
+            await self.register(bridge, sparse)
+        self.assertEqual(bridge.snapshot(), before)
+        self.assertIsNone(bridge._construction_contract)
+        self.assertFalse(bridge._owned_placements)
+        self.assertFalse((await bridge.construction_status())["active"])
+        self.assertFalse(grade_task(task, bridge.snapshot())["passed"])
+
+    async def test_missing_preserved_cell_or_wrong_complete_geometry_cannot_trigger_setup(self):
+        for change in ("missing_correct_cobble", "contradictory_air"):
+            with self.subTest(change=change):
+                task = make_task("repair_shelter", 204)
+                bridge = SimulatedConstructionBridge(task)
+                desired = dict(task.expected)
+                if change == "missing_correct_cobble":
+                    desired.pop(next(p for p, block in task.expected.items() if block == "cobblestone"))
+                else:
+                    desired[task.owned_mistake_fixture[0]] = "cobblestone"
+                before = bridge.snapshot()
+                with self.assertRaisesRegex(ValueError, "INCOMPLETE_REPAIR_FIXTURE_CONTRACT"):
+                    await self.register(bridge, desired)
+                self.assertEqual(bridge.snapshot(), before)
+                self.assertIsNone(bridge._construction_contract)
+
+    async def test_equivalent_complete_scalar_contract_can_activate_fixture_without_substitution(self):
+        from agent.construction_checks import construction_contract
+        task = make_task("repair_shelter", 204)
+        bridge = SimulatedConstructionBridge(task)
+        goals = [{"kind": "block_is", "position": position(p), "block": block, "must_change": False}
+                 for p, block in task.expected.items()]
+        contract = construction_contract(goals, bridge.world, "scalar-complete-controller-fixture")
+        original = json.loads(json.dumps(contract))
+        ack = await bridge.set_construction_contract(contract)
+        self.assertTrue(ack["active"])
+        self.assertEqual(contract, original)
+        self.assertEqual(ack["cell_count"], len(task.expected))
+        self.assertTrue(bridge.snapshot()["owned_mistake_fixture"]["complete"])
+        self.assertEqual((await bridge.construction_status())["repairable_count"], 2)
+
+    async def test_phase_facts_distinguish_baseline_fixture_injection_and_revoked_authority(self):
+        task = make_task("repair_shelter", 204)
+        bridge = SimulatedConstructionBridge(task)
+        state = await bridge.get_state()
+        packet = state["constructionPractice"]
+        facts = packet["owned_mistake_benchmark"]
+        self.assertEqual(facts["phase"], "awaiting_complete_accepted_geometry")
+        self.assertFalse(facts["fixture_setup_complete"])
+        self.assertEqual(facts["verified_fixture_placement_count"], 0)
+        self.assertFalse(packet["construction_status"]["active"])
+        self.assertEqual(packet["request_context"]["work_mode"], "repair_existing")
+        self.assertNotIn("expected_cells", packet)
+        self.assertNotIn("positions", facts)
+        self.assertNotIn("desired_cells", packet)
+        await self.register(bridge)
+        after = (await bridge.get_state())["constructionPractice"]
+        self.assertEqual(after["owned_mistake_benchmark"]["phase"], "fixture_injected_current_task")
+        self.assertTrue(after["owned_mistake_benchmark"]["current_task_authority_active"])
+        self.assertEqual(after["owned_mistake_benchmark"]["verified_fixture_placement_count"], 2)
+        self.assertEqual(after["construction_status"]["repairable_count"], 2)
+        self.assertTrue(all(bridge.blocks[p] == "cobblestone" for p in task.owned_mistake_fixture))
+        await bridge.set_construction_contract(None)
+        ended = (await bridge.get_state())["constructionPractice"]["owned_mistake_benchmark"]
+        self.assertEqual(ended["phase"], "fixture_injected_authority_inactive")
+        self.assertFalse(ended["current_task_authority_active"])
+
+    async def test_incomplete_fixture_setup_reports_partial_verified_effects_honestly(self):
+        task = make_task("repair_shelter", 204)
+        bridge = SimulatedConstructionBridge(task)
+        bridge.inventory["cobblestone"] = 1  # Explicit harness failure fixture, not model work.
+        with self.assertRaisesRegex(RuntimeError, "REPAIR_FIXTURE_SETUP_FAILED"):
+            await self.register(bridge)
+        facts = (await bridge.get_state())["constructionPractice"]["owned_mistake_benchmark"]
+        self.assertEqual(facts["phase"], "fixture_setup_incomplete")
+        self.assertFalse(facts["fixture_setup_complete"])
+        self.assertEqual(facts["verified_fixture_placement_count"], 1)
+        self.assertIn("partial verified placements", facts["notice"])
+        self.assertFalse(grade_task(task, bridge.snapshot())["passed"])
 
     async def test_verified_current_task_owned_mistakes_are_repaired_without_demolishing_completed_build(self):
         task, bridge, targets = await self.owned_mistake()
@@ -629,19 +728,23 @@ class ModelLoopIntegrationTests(unittest.IsolatedAsyncioTestCase):
         task = make_task(task_name, 42)
         all_targets = list(task.expected)
         targets = all_targets if full_goals else all_targets[:1]
+        # The fake model explicitly chooses useful observed missing cells.
+        # Completed final cells remain in its goal; the controller must never
+        # silently filter/reorder an issued batch to compensate for a bad plan.
+        action_targets = [p for p in targets if task.initial[p] != task.expected[p]]
         goal = {"kind": "regions_match", "regions": [{
             "min": position((task.minimum[0], task.minimum[1], task.minimum[2])),
             "max": position((task.maximum[0], task.minimum[1], task.maximum[2])) if full_goals else position(targets[0]),
             "block": "cobblestone", "mode": "solid"}], "must_change": task_name != "partial_row"}
         model_decision = {"type": "act", "goals": [goal], "reason": "Fake-model plumbing test only.",
                           "actions": [{"name": "place_batch", "args": {
-                              "item": "cobblestone", "positions": [position(p) for p in targets]}}]}
+                              "item": "cobblestone", "positions": [position(p) for p in action_targets]}}]}
 
         class FakeLocalClient:
             def __init__(self, model, stream):
                 self.calls, self.stream = 0, stream
                 self.client = SimpleNamespace(close=AsyncMock())
-                self.responses = [model_decision, {"requirements": []},
+                self.responses = [model_decision,
                                   {"covers_request": True, "reason": "Fake reviewer approves for this plumbing test.", "missing_outcomes": []},
                                   {"type": "act", "reason": "Fake model reselects its original targets from grounded facts.",
                                    "actions": model_decision["actions"]}]
@@ -670,7 +773,9 @@ class ModelLoopIntegrationTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(case["passed"])
         self.assertEqual(case["result"]["data"]["goals"], decision["goals"])
         self.assertEqual(case["result"]["data"]["trace"][0]["action"], decision["actions"][0])
-        self.assertEqual(report["inference_calls"], 4)
+        self.assertEqual(report["inference_calls"], 3)
+        self.assertEqual(case["result"]["data"]["requested_quantities"], [])
+        self.assertTrue(case["result"]["data"]["quantity_source_facts"]["safe_without_quantity_inference"])
         self.assertFalse(report["weight_training"])
         self.assertFalse(report["normal_world_access"])
         self.assertFalse(report["paid_apis"])
