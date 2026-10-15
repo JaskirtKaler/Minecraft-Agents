@@ -47,7 +47,7 @@ public final class JarvisDebugPlugin extends JavaPlugin implements Listener {
             // Also covers respawns and food state restored by other plugins.
             getServer().getScheduler().runTaskTimer(this,
                 () -> getServer().getOnlinePlayers().forEach(assistance::maintainPlayer), 20L, 100L);
-            getLogger().info("Training mode: Peaceful worlds, full food, time/weather commands for configured viewers.");
+            getLogger().info("Training mode: Peaceful worlds, full food, gamemode/time/weather commands for configured human viewers; no bot command grants.");
         }
     }
 

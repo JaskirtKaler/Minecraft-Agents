@@ -32,9 +32,11 @@ if [ "$MODE" = --test ]; then
     mkdir -p "$BUILD_DIR/test-classes"
     "$JDK_BIN/javac" --release 17 -proc:none -encoding UTF-8 -classpath "$BUILD_DIR/classes:$CLASSPATH" \
         -d "$BUILD_DIR/test-classes" "$PLUGIN_DIR/src/test/java/dev/minecraftagents/debug/InventorySafetyTest.java" \
-        "$PLUGIN_DIR/src/test/java/dev/minecraftagents/debug/TrainingModeTest.java"
+        "$PLUGIN_DIR/src/test/java/dev/minecraftagents/debug/TrainingModeTest.java" \
+        "$PLUGIN_DIR/src/test/java/dev/minecraftagents/debug/TrainingCommandPermissionsTest.java"
     "$JAVA_BIN" -ea -classpath "$BUILD_DIR/test-classes:$BUILD_DIR/classes:$CLASSPATH" dev.minecraftagents.debug.InventorySafetyTest
     "$JAVA_BIN" -ea -classpath "$BUILD_DIR/test-classes:$BUILD_DIR/classes:$CLASSPATH" dev.minecraftagents.debug.TrainingModeTest
+    "$JAVA_BIN" -ea -classpath "$BUILD_DIR/test-classes:$BUILD_DIR/classes:$CLASSPATH" dev.minecraftagents.debug.TrainingCommandPermissionsTest
 else
     "$JDK_BIN/jar" --create --file "$BUILD_DIR/JarvisDebug.jar" -C "$BUILD_DIR/classes" . -C "$PLUGIN_DIR/src/main/resources" .
     mkdir -p "$ROOT_DIR/server/plugins"

@@ -267,7 +267,7 @@ echo "Commands: @$BOT_USERNAME status / stop / inventory / memory"
 echo "Command players: $COMMAND_PLAYERS (MC_COMMAND_PLAYERS). Plain chat and other senders are ignored."
 if [ "$AGENT_ONLY" = 0 ] && [ "${MC_TRAINING_MODE:-true}" = true ]; then
     echo "Development mode: Peaceful difficulty + full food, still Survival crafting/mining."
-    echo "Configured debug players can use /time set day and /weather clear."
+    echo "Configured human debug players can use /gamemode creative, /gamemode survival, /time set day and /weather clear."
 fi
 if [ "$AGENT_ONLY" = 1 ]; then
     echo "Keep this terminal open. Ctrl+C stops only this agent; the Minecraft server keeps running."

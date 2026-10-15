@@ -41,6 +41,8 @@ server/versions/
 server/world/
 server/world_nether/
 server/world_the_end/
+# Separate fresh gathering/farming saves (including their Nether/End folders).
+server/world-gather-farm-*/
 server/crash-reports/
 server/usercache.json
 server/version_history.json

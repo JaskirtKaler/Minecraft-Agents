@@ -64,6 +64,7 @@ class Config(BaseModel):
     agent_reflection_delay: float = Field(default_factory=lambda: float(os.getenv('AGENT_REFLECTION_DELAY', '10')), ge=0, le=300, validate_default=True)
     goal_review_enabled: bool = Field(default_factory=lambda: os.getenv('GOAL_REVIEW_ENABLED', 'true').lower() == 'true')
     learning_dir: str = Field(default_factory=lambda: os.getenv("LEARNING_DIR", "data/learning"))
+    learning_focus: str = Field(default_factory=lambda: os.getenv("LEARNING_FOCUS", ""), max_length=500, validate_default=True)
     local_planner_thinking: bool = Field(default_factory=lambda: os.getenv('LOCAL_PLANNER_THINKING', 'false').lower() == 'true')
     mc_training_mode: bool = Field(default_factory=lambda: os.getenv('MC_TRAINING_MODE', 'true').lower() == 'true')
 

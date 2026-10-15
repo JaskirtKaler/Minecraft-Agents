@@ -15,7 +15,7 @@ import org.bukkit.event.player.PlayerQuitEvent;
 import org.bukkit.permissions.PermissionAttachment;
 import org.bukkit.plugin.Plugin;
 
-/** Grants only time/weather commands to configured human players in training mode. */
+/** Grants staging commands to configured humans only; never operator status or bot permissions. */
 public final class TrainingCommandPermissions implements Listener {
     private final Plugin plugin;
     private final String botUsername;
@@ -36,6 +36,7 @@ public final class TrainingCommandPermissions implements Listener {
         PermissionAttachment attachment = player.addAttachment(plugin);
         attachment.setPermission("minecraft.command.time", true);
         attachment.setPermission("minecraft.command.weather", true);
+        attachment.setPermission("minecraft.command.gamemode", true);
         attachments.put(player.getUniqueId(), attachment);
         player.updateCommands();
     }

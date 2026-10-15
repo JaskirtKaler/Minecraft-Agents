@@ -281,6 +281,15 @@ class ModelToolAgentTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn('experience', prompt)
         self.assertIn('practice_progress', prompt)
 
+    async def test_curriculum_focus_guides_model_without_selecting_or_executing_actions(self):
+        agent, bridge, client, state = self.fixture([{'objective': 'collect 3 oak logs', 'reason': 'Gather resources.'}])
+        agent.settings.learning_focus = 'Gathering and farming'
+        choice = await agent.choose_objective(state)
+        self.assertEqual(choice['objective'], 'collect 3 oak logs')
+        bridge.execute_tool.assert_not_awaited()
+        prompt = json.loads(client.generate_response.call_args.args[0][1]['content'])
+        self.assertEqual(prompt['practice_focus'], 'Gathering and farming')
+
 
 class GenericBridgeTests(unittest.IsolatedAsyncioTestCase):
     async def test_tool_timeout_cancels_and_discards_correlated_request(self):
